@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	//	"io/ioutil"
+	"encoding/binary"
 	"log"
 	"net"
 	"os"
@@ -19,10 +20,18 @@ func relay(in, out net.Conn) {
 }
 
 func handleClient(c net.Conn) {
-	buf := make([]byte, 512)
-	n, _ := c.Read(buf)
-	log.Println("raw addr: ", string(buf[:n]))
-	if proxyConn, err := net.Dial("tcp", string(buf[:n])); err != nil {
+	var addrLen uint16
+	if err := binary.Read(c, binary.BigEndian, &addrLen); err != nil {
+		log.Println("read length of addr error:", err)
+		c.Close()
+		return
+	}
+	log.Println("length of addr :", addrLen)
+
+	buf := make([]byte, addrLen)
+	c.Read(buf)
+	log.Println("raw addr: ", string(buf))
+	if proxyConn, err := net.Dial("tcp", string(buf)); err != nil {
 		log.Println("error on Dial", err)
 		c.Close()
 		return

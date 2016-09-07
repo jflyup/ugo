@@ -135,7 +135,7 @@ func doConnect(c net.Conn, command uint8) (proxyConn net.Conn, err error) {
 	}
 
 	sendReply(c, succeeded)
-
+	binary.Write(client, binary.BigEndian, uint16(len(addr)))
 	client.Write([]byte(addr))
 	return client, nil
 }
