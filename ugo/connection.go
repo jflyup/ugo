@@ -343,7 +343,7 @@ func (c *connection) resetTimer() {
 func (c *connection) handlePacket(data []byte) error {
 	c.lastNetworkActivityTime = time.Now()
 
-	//c.crypt.Decrypt(data, data)
+	c.crypt.Decrypt(data, data)
 	// TODO check data integrity
 	if c.fec != nil {
 		f := c.fec.decode(data)
@@ -578,9 +578,8 @@ func (s *connection) sendPacket() error {
 		}
 		s.delayedAckOriginTime = time.Time{}
 
-		//s.crypt.Encrypt(pkt.D, pkt.D)
+		s.crypt.Encrypt(pkt.D, pkt.D)
 		_, err = s.conn.WriteTo(pkt.D, s.addr)
-		//putPacketBuffer(packet.raw)
 		if err != nil {
 			return err
 		}
