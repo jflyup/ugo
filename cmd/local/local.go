@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	//	"io/ioutil"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -226,7 +227,7 @@ func main() {
 
 	f, err := os.OpenFile("proxy.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		log.Println("error opening file: %v", err)
+		fmt.Println("error opening file: %v", err)
 	}
 	defer f.Close()
 	log.SetOutput(f)

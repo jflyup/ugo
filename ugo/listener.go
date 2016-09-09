@@ -86,6 +86,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 			conn := newConnection(c, remoteAddr, clientConnectionID, AESCrypto, nil, func() {
 				// TODO
 				delete(l.connections, remoteAddr.String())
+				c.Close()
 				log.Println("close connection")
 			})
 			l.connections[remoteAddr.String()] = conn

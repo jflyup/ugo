@@ -84,8 +84,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 
 		segmentQueue: newStreamFrameSorter(), // used for incoming segments reordering
 
-		receivedPackets: make(chan []byte, 1024),
-		//closeChan:        make(chan *qerr.QuicError, 1),
+		receivedPackets:  make(chan []byte, 1024),
 		sendingScheduled: make(chan struct{}, 1),
 		chRead:           make(chan struct{}, 1),
 		chWrite:          make(chan struct{}, 1),
@@ -107,10 +106,7 @@ func (c *connection) run() {
 	for {
 		// Close immediately if requested
 		select {
-		case err := <-c.closeChan:
-			if err != nil {
-				c.sendConnectionClose(err)
-			}
+		case <-c.closeChan:
 			return
 		default:
 		}
@@ -141,14 +137,14 @@ func (c *connection) run() {
 
 		if err != nil {
 			log.Println("handle error", err)
-			c.CloseWithError(err)
-			break //TODO
+			c.Close()
+			return
 		}
 
 		if err := c.sendPacket(); err != nil {
 			log.Println("send error", err)
-			c.CloseWithError(err)
-			break // TODO
+			c.Close()
+			return
 		}
 
 		if time.Now().Sub(c.lastNetworkActivityTime) >= InitialIdleConnectionStateLifetime {
@@ -215,9 +211,10 @@ func (s *connection) Read(p []byte) (int, error) {
 				log.Println("recv read event")
 				s.mutex.Lock()
 				frame = s.segmentQueue.Head()
-
 			case <-timeout:
 				return bytesRead, errTimeout
+			case <-s.closeChan:
+				return 0, io.ErrClosedPipe
 			}
 		}
 		s.mutex.Unlock()
@@ -253,6 +250,9 @@ func (s *connection) Read(p []byte) (int, error) {
 }
 
 func (s *connection) Write(p []byte) (int, error) {
+	if atomic.LoadInt32(&s.closed) != 0 {
+		return 0, io.ErrClosedPipe
+	}
 	s.wmu.Lock()
 
 	s.dataForWriting = make([]byte, len(p))
@@ -273,6 +273,8 @@ func (s *connection) Write(p []byte) (int, error) {
 			break
 		case <-timeout:
 			return 0, errTimeout
+		case <-s.closeChan:
+			return 0, io.ErrClosedPipe
 		}
 	}
 
@@ -282,8 +284,12 @@ func (s *connection) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (s *connection) Close() error {
-	return s.closeImpl(nil, true)
+func (c *connection) Close() error {
+	atomic.StoreInt32(&c.closed, 1)
+	c.sendConnectionClose(nil)
+	c.closeChan <- errors.New("close")
+	return nil
+	//return s.closeImpl(nil, true)
 }
 
 func (c *connection) LocalAddr() net.Addr {
@@ -384,7 +390,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	if p.flag == 0x10 {
-		// close
+		c.closeChan <- nil
 	}
 
 	if p.PacketNumber != 0 {
