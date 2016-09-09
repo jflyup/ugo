@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -285,9 +284,10 @@ func (s *connection) Write(p []byte) (int, error) {
 }
 
 func (c *connection) Close() error {
-	atomic.StoreInt32(&c.closed, 1)
-	c.sendConnectionClose(nil)
-	c.closeChan <- errors.New("close")
+	//c.sendConnectionClose(nil)
+	//c.closeChan <- errors.New("close")
+	//atomic.StoreInt32(&c.closed, 1)
+	//c.closeCallback()
 	return nil
 	//return s.closeImpl(nil, true)
 }
@@ -376,7 +376,7 @@ func (c *connection) handlePacket(data []byte) error {
 	// decode
 	if err := p.decode(); err != nil {
 		log.Println("recv invalid data:", p.D)
-		return nil
+		return err
 	}
 
 	log.Printf("recv packet %d, length %d", p.PacketNumber, p.Length)
@@ -386,11 +386,14 @@ func (c *connection) handlePacket(data []byte) error {
 
 	if p.flag&0x01 != 0 {
 		log.Println("recv weird data:", p.D)
+		// TODO should close the connection
 		return nil
 	}
 
 	if p.flag == 0x10 {
+		log.Println("recv close:", p.PacketNumber)
 		c.closeChan <- nil
+		return nil
 	}
 
 	if p.PacketNumber != 0 {
@@ -562,6 +565,10 @@ func (s *connection) sendPacket() error {
 			return err
 		}
 
+		if pkt.flag == 0x80 {
+			pkt.PacketNumber = 0
+		}
+
 		if ack != nil {
 			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.PacketNumber, ack, time.Now().String())
 		}
@@ -572,18 +579,11 @@ func (s *connection) sendPacket() error {
 			return err
 		}
 
-		if len(s.sentPacketHandler.packetHistory) != 0 {
-			var historys []int
-			for k, _ := range s.sentPacketHandler.packetHistory {
-				historys = append(historys, int(k))
-			}
-
-			sort.Ints(historys)
-
-			//log.Printf("history list: %v", historys)
-		}
 		s.delayedAckOriginTime = time.Time{}
 
+		if pkt.flag&0x01 != 0 {
+			log.Println("send invalild data:", pkt.D)
+		}
 		s.crypt.Encrypt(pkt.D, pkt.D)
 		_, err = s.conn.WriteTo(pkt.D, s.addr)
 		if err != nil {
@@ -650,12 +650,15 @@ func (s *connection) sendPacket() error {
 //}
 
 func (c *connection) sendConnectionClose(err error) {
+	c.lastPacketNumber++
 	pkt := &Packet{
 		flag:         0x10,
 		PacketNumber: c.lastPacketNumber,
 	}
 
 	pkt.encode()
+	c.sentPacketHandler.SentPacket(pkt)
+	c.crypt.Encrypt(pkt.D, pkt.D)
 
 	c.conn.WriteTo(pkt.D, c.addr)
 }

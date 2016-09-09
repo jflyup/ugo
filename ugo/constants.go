@@ -4,11 +4,8 @@ import (
 	"time"
 )
 
-type PacketType byte
-
 const (
-	PacketData = PacketType(iota)
-	PacketInit
+	PacketInit = 0
 )
 
 type EncryptType byte
