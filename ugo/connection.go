@@ -661,11 +661,11 @@ func (c *connection) sendConnectionClose(err error) {
 	c.lastPacketNumber++
 	pkt := &Packet{
 		flag:         0x10,
-		PacketNumber: c.lastPacketNumber,
+		PacketNumber: 0,
 	}
 
 	pkt.encode()
-	c.sentPacketHandler.SentPacket(pkt)
+	//c.sentPacketHandler.SentPacket(pkt)
 	c.crypt.Encrypt(pkt.D, pkt.D)
 
 	c.conn.WriteTo(pkt.D, c.addr)

@@ -99,14 +99,16 @@ func (h *receivedPacketHandler) ReceivedStopWaiting(f uint32) error {
 	h.packetHistory.DeleteBelow(f)
 
 	ackRanges := h.packetHistory.GetAckRanges()
+	// TODO
+	if len(ackRanges) > 0 {
+		n := ackRanges[len(ackRanges)-1].LastPacketNumber
+		h.packetHistory.DeleteBelow(n)
+		h.largestInOrderObserved = n
+		h.ignorePacketsBelow = n
+		h.garbageCollectReceivedTimes()
+	}
 
-	n := ackRanges[len(ackRanges)-1].LastPacketNumber
-	h.packetHistory.DeleteBelow(n)
-	h.largestInOrderObserved = n
-	h.ignorePacketsBelow = n
-	h.garbageCollectReceivedTimes()
-
-	fmt.Printf("recv handle stop waiting %d, ack range %v\n", f, h.packetHistory.GetAckRanges())
+	fmt.Printf("recv handle stop waiting %d, ack range %v\n", f, ackRanges)
 
 	return nil
 }
