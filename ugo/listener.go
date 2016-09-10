@@ -91,7 +91,6 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 					l.mu.Lock()
 					delete(l.connections, remoteAddr.String())
 					l.mu.Unlock()
-					c.Close()
 					log.Println("close connection with ", remoteAddr.String())
 				})
 				l.connections[remoteAddr.String()] = conn

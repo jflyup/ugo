@@ -9,9 +9,9 @@ func (s *stopWaitingManager) GetStopWaitingFrame(force bool) uint32 {
 	if s.state == true {
 		s.state = false
 		return s.largestLeastUnackedSent
-	} else {
-		return 0
 	}
+	
+	return 0
 }
 
 func (s *stopWaitingManager) SetBoundary(p uint32) {

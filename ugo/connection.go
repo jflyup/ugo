@@ -284,10 +284,14 @@ func (s *connection) Write(p []byte) (int, error) {
 }
 
 func (c *connection) Close() error {
-	//c.sendConnectionClose(nil)
-	//c.closeChan <- errors.New("close")
-	//atomic.StoreInt32(&c.closed, 1)
-	//c.closeCallback()
+	// Only close once
+	if !atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
+		return nil
+	}
+	c.sendConnectionClose(nil)
+	close(c.closeChan)
+	atomic.StoreInt32(&c.closed, 1)
+	c.closeCallback()
 	return nil
 	//return s.closeImpl(nil, true)
 }
@@ -392,7 +396,9 @@ func (c *connection) handlePacket(data []byte) error {
 
 	if p.flag == 0x10 {
 		log.Println("recv close:", p.PacketNumber)
-		c.closeChan <- nil
+		// peer has already gone
+		// no TIME_WAIT CLOSE_WAIT like TCP
+		c.Close()
 		return nil
 	}
 
@@ -489,7 +495,9 @@ func (c *connection) closeImpl(e error, remoteClose bool) error {
 
 func (s *connection) sendPacket() error {
 	// Repeatedly try sending until we don't have any more data, or run out of the congestion window
-
+	if atomic.LoadInt32(&s.closed) != 0 {
+		return nil
+	}
 	// TODO split send and recv in 2 goroutine
 	for {
 		err := s.sentPacketHandler.CheckForError()
