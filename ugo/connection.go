@@ -590,7 +590,7 @@ func (s *connection) sendPacket() error {
 		s.delayedAckOriginTime = time.Time{}
 
 		if pkt.flag&0x01 != 0 {
-			log.Println("send invalild data:", pkt.D)
+			log.Println("send invalid data:", pkt.D)
 		}
 		s.crypt.Encrypt(pkt.D, pkt.D)
 		_, err = s.conn.WriteTo(pkt.D, s.addr)

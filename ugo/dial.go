@@ -91,9 +91,8 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 		// did we get reply?
 		if n == 4 {
 			peerConnID = protocol.ConnectionID(binary.BigEndian.Uint32(buffer[:n]))
+			log.Println("connected with server")
 			break
-		} else {
-			continue
 		}
 
 		retries--
