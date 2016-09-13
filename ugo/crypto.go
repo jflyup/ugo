@@ -3,11 +3,35 @@ package ugo
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rc4"
 )
 
 type StreamCrypto interface {
 	Encrypt(dst, src []byte)
 	Decrypt(dst, src []byte)
+}
+
+type rc4StreamCrypto struct {
+	cipher *rc4.Cipher
+}
+
+func newRC4Crypto(key []byte) (*rc4StreamCrypto, error) {
+	cipher, err := rc4.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rc4StreamCrypto{
+		cipher: cipher,
+	}, nil
+}
+
+func (c *rc4StreamCrypto) Encrypt(dst, src []byte) {
+	c.cipher.XORKeyStream(dst, src)
+}
+
+func (c *rc4StreamCrypto) Decrypt(dst, src []byte) {
+	c.cipher.XORKeyStream(dst, src)
 }
 
 type AESStreamCrypto struct {
@@ -17,6 +41,7 @@ type AESStreamCrypto struct {
 	dec cipher.Stream
 }
 
+// it's not safe for concurrent use!
 func newAESStreamCrypto(key []byte, iv []byte) (c *AESStreamCrypto, err error) {
 	// the IV must have the same length as the block
 	aesBlock, err := aes.NewCipher([]byte(key))

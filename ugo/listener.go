@@ -69,26 +69,33 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	if conn, ok := l.connections[remoteAddr.String()]; ok {
 		// TODO check data integrity
 
-		// feed data to connection
-		conn.receivedPackets <- buffer
+		if len(buffer) == 22 && buffer[0] == PacketInit {
+			log.Println("already connected, discard")
+		} else {
+			// feed data to connection
+			conn.receivedPackets <- buffer
+		}
 	} else {
 		if len(buffer) == 22 {
 			// TODO Connection migration
 			if buffer[0] == PacketInit {
-				iv := buffer[2:18]
+				//iv := buffer[2:18]
 				clientConnectionID := protocol.ConnectionID(binary.BigEndian.Uint32(buffer[18:22]))
 
 				var connectionID [4]byte
 				crand.Read(connectionID[:])
 				c.WriteTo(connectionID[:], remoteAddr)
 
+				// AES CBC/CFB cipher depends on the previous block of ciphertext/plaintext when encrypting/decrypting
+				// so once a packet is lost, the receiver can't decrypt the following packets.
+				// we should do decryption after reordering packets. Use RC4 instead for now
 				key := "1234567890123456" // TODO
-				AESCrypto, _ := newAESStreamCrypto([]byte(key), iv)
+				RC4Crypto, _ := newRC4Crypto([]byte(key))
 
 				//fec = NewFEC(128, 10, 3)
 
 				// once crypto method is settled, talk in secret
-				conn := newConnection(c, remoteAddr, clientConnectionID, AESCrypto, nil, func() {
+				conn := newConnection(c, remoteAddr, clientConnectionID, RC4Crypto, nil, func() {
 					// TODO
 					l.mu.Lock()
 					delete(l.connections, remoteAddr.String())

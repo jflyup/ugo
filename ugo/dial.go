@@ -104,7 +104,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 	}
 
 	const key = "1234567890123456"
-	AESCrypto, err := newAESStreamCrypto([]byte(key), iv[:])
+	RC4Crypto, err := newRC4Crypto([]byte(key))
 	if err != nil {
 		log.Fatal("crypto setup failed")
 		return nil, err
@@ -112,7 +112,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 
 	//fec = NewFEC(128, 10, 3)
 	// create connection
-	conn := newConnection(pc, addr, peerConnID, AESCrypto, nil, func() { pc.Close() })
+	conn := newConnection(pc, addr, peerConnID, RC4Crypto, nil, func() { pc.Close() })
 
 	go conn.run()
 	go recvData(pc, conn)
