@@ -90,7 +90,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 				// so once a packet is lost, the receiver can't decrypt the following packets.
 				// we should do decryption after reordering packets. Use RC4 instead for now
 				key := "1234567890123456" // TODO
-				RC4Crypto, _ := newRC4Crypto([]byte(key))
+				RC4Crypto := newRC4Crypto([]byte(key))
 
 				//fec = NewFEC(128, 10, 3)
 

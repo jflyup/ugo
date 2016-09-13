@@ -104,11 +104,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 	}
 
 	const key = "1234567890123456"
-	RC4Crypto, err := newRC4Crypto([]byte(key))
-	if err != nil {
-		log.Fatal("crypto setup failed")
-		return nil, err
-	}
+	RC4Crypto := newRC4Crypto([]byte(key))
 
 	//fec = NewFEC(128, 10, 3)
 	// create connection

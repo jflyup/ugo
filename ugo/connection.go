@@ -602,6 +602,8 @@ func (s *connection) sendPacket() error {
 		s.cryptMu.Lock()
 		s.crypt.Encrypt(pkt.D, pkt.D)
 		s.cryptMu.Unlock()
+		test := make([]byte, pkt.Length)
+		s.crypt.Decrypt(test, pkt.D)
 		_, err = s.conn.WriteTo(pkt.D, s.addr)
 		if err != nil {
 			return err

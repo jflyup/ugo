@@ -12,26 +12,30 @@ type StreamCrypto interface {
 }
 
 type rc4StreamCrypto struct {
-	cipher *rc4.Cipher
+	key []byte
 }
 
-func newRC4Crypto(key []byte) (*rc4StreamCrypto, error) {
-	cipher, err := rc4.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
+func newRC4Crypto(key []byte) *rc4StreamCrypto {
 
 	return &rc4StreamCrypto{
-		cipher: cipher,
-	}, nil
+		key: key,
+	}
 }
 
 func (c *rc4StreamCrypto) Encrypt(dst, src []byte) {
-	c.cipher.XORKeyStream(dst, src)
+	cipher, err := rc4.NewCipher(c.key)
+	if err != nil {
+		return
+	}
+	cipher.XORKeyStream(dst, src)
 }
 
 func (c *rc4StreamCrypto) Decrypt(dst, src []byte) {
-	c.cipher.XORKeyStream(dst, src)
+	cipher, err := rc4.NewCipher(c.key)
+	if err != nil {
+		return
+	}
+	cipher.XORKeyStream(dst, src)
 }
 
 type AESStreamCrypto struct {
