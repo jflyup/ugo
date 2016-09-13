@@ -67,6 +67,8 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if conn, ok := l.connections[remoteAddr.String()]; ok {
+		// TODO check data integrity
+
 		// feed data to connection
 		conn.receivedPackets <- buffer
 	} else {

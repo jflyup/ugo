@@ -53,6 +53,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 		pc.Close()
 		return nil, fmt.Errorf("Failed to generate iv: %v", err)
 	}
+	log.Printf("addr: %s, iv: %v", pc.LocalAddr().String(), iv)
 	var connectionID [4]byte
 	crand.Read(connectionID[:])
 
@@ -91,7 +92,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 		// did we get reply?
 		if n == 4 {
 			peerConnID = protocol.ConnectionID(binary.BigEndian.Uint32(buffer[:n]))
-			log.Println("connected with server")
+			log.Printf("connected with server, retry %d times", retries)
 			break
 		}
 
@@ -128,7 +129,7 @@ func recvData(c net.PacketConn, conn *connection) {
 			return
 		}
 
-		if n >= 4 { // TODO check packet validity
+		if n > 4 { // TODO check packet validity
 			conn.receivedPackets <- buf[:n]
 		} else {
 			log.Printf("recv malformed data")

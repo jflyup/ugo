@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,7 @@ type connection struct {
 	currentDeadline time.Time
 	timerRead       bool
 	fec             *FEC
+	cryptMu         sync.Mutex
 	crypt           StreamCrypto
 	err             error
 	mutex           sync.Mutex
@@ -106,6 +108,7 @@ func (c *connection) run() {
 		// Close immediately if requested
 		select {
 		case <-c.closeChan:
+			log.Printf("close connection with %s", c.addr.String())
 			return
 		default:
 		}
@@ -256,7 +259,7 @@ func (s *connection) Write(p []byte) (int, error) {
 
 	s.dataForWriting = make([]byte, len(p))
 	copy(s.dataForWriting, p)
-
+	s.wmu.Unlock()
 	s.scheduleSending()
 
 	var timeout <-chan time.Time
@@ -265,11 +268,10 @@ func (s *connection) Write(p []byte) (int, error) {
 		timeout = time.After(delay)
 	}
 
-	s.wmu.Unlock()
-	for s.dataForWriting != nil && s.err == nil {
+	for {
 		select {
 		case <-s.chWrite:
-			break
+			return len(p), nil
 		case <-timeout:
 			return 0, errTimeout
 		case <-s.closeChan:
@@ -277,13 +279,13 @@ func (s *connection) Write(p []byte) (int, error) {
 		}
 	}
 
-	if s.err != nil {
-		return 0, s.err
-	}
-	return len(p), nil
 }
 
 func (c *connection) Close() error {
+	_, file, no, ok := runtime.Caller(1)
+	if ok {
+		fmt.Printf("called from %s#%d\n", file, no)
+	}
 	// Only close once
 	if !atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
 		return nil
@@ -379,11 +381,11 @@ func (c *connection) handlePacket(data []byte) error {
 	p.Length = uint32(len(p.D))
 	// decode
 	if err := p.decode(); err != nil {
-		log.Println("recv invalid data:", p.D)
+		log.Printf("err: %v, recv invalid data: %v from %s", err, p.D, c.addr.String())
 		return err
 	}
 
-	log.Printf("recv packet %d, length %d", p.PacketNumber, p.Length)
+	log.Printf("%s recv packet %d, length %d", c.localAddr.String(), p.PacketNumber, p.Length)
 	if p.flag == 128 {
 		log.Println("recv ack", p.ackFrame, time.Now().String())
 	}
@@ -439,7 +441,10 @@ func (s *connection) handleSegment(frame *segment) error {
 	}
 	s.mutex.Unlock()
 
-	s.chRead <- struct{}{}
+	select {
+	case s.chRead <- struct{}{}:
+	default:
+	}
 
 	return nil
 }
@@ -581,10 +586,12 @@ func (s *connection) sendPacket() error {
 			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.PacketNumber, ack, time.Now().String())
 		}
 
-		log.Printf("sending packet %d to %s\n, data length: %d", pkt.PacketNumber, s.addr, len(pkt.D))
-		err = s.sentPacketHandler.SentPacket(pkt)
-		if err != nil {
-			return err
+		log.Printf("%s sending packet %d to %s\n, data length: %d, data %v", s.localAddr.String(), pkt.PacketNumber, s.addr, len(pkt.D), pkt.D)
+		if pkt.PacketNumber != 0 {
+			err = s.sentPacketHandler.SentPacket(pkt)
+			if err != nil {
+				return err
+			}
 		}
 
 		s.delayedAckOriginTime = time.Time{}
@@ -592,7 +599,9 @@ func (s *connection) sendPacket() error {
 		if pkt.flag&0x01 != 0 {
 			log.Println("send invalid data:", pkt.D)
 		}
+		s.cryptMu.Lock()
 		s.crypt.Encrypt(pkt.D, pkt.D)
+		s.cryptMu.Unlock()
 		_, err = s.conn.WriteTo(pkt.D, s.addr)
 		if err != nil {
 			return err
@@ -658,7 +667,7 @@ func (s *connection) sendPacket() error {
 //}
 
 func (c *connection) sendConnectionClose(err error) {
-	c.lastPacketNumber++
+	//c.lastPacketNumber++
 	pkt := &Packet{
 		flag:         0x10,
 		PacketNumber: 0,
@@ -666,7 +675,9 @@ func (c *connection) sendConnectionClose(err error) {
 
 	pkt.encode()
 	//c.sentPacketHandler.SentPacket(pkt)
+	c.cryptMu.Lock()
 	c.crypt.Encrypt(pkt.D, pkt.D)
+	c.cryptMu.Unlock()
 
 	c.conn.WriteTo(pkt.D, c.addr)
 }
@@ -702,7 +713,10 @@ func (c *connection) getDataForWriting(maxBytes uint32) []byte {
 	}
 	c.writeOffset += uint32(len(ret))
 	c.wmu.Unlock()
-	c.chWrite <- struct{}{}
+	select {
+	case c.chWrite <- struct{}{}:
+	default:
+	}
 
 	return ret
 }
