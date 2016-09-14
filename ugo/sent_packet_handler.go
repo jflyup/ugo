@@ -116,7 +116,7 @@ func (h *sentPacketHandler) nackPacket(packetNumber uint32) (*Packet, error) {
 	packet.MissingReports++
 
 	if packet.MissingReports > 3 && !packet.Retransmitted {
-		log.Printf("fast retransimition packet %d", packet.PacketNumber)
+		log.Printf("fast retransimition packet %d, Missing count %d", packet.PacketNumber, packet.MissingReports)
 		h.queuePacketForRetransmission(packet) // fast retransmition
 		return packet, nil
 	}
@@ -337,7 +337,7 @@ func (h *sentPacketHandler) CongestionAllowsSending() bool {
 
 func (h *sentPacketHandler) CheckForError() error {
 	length := len(h.retransmissionQueue) + len(h.packetHistory)
-	if uint32(length) > 2000 {
+	if length > 2000 {
 		log.Printf("retransmissionQueue size: %d, history size: %d", len(h.retransmissionQueue), len(h.packetHistory))
 		return ErrTooManyTrackedSentPackets
 	}
@@ -358,7 +358,8 @@ func (h *sentPacketHandler) maybeQueuePacketsRTO() {
 			}}
 			h.congestion.OnCongestionEvent(false, h.BytesInFlight(), nil, packetsLost)
 			h.congestion.OnRetransmissionTimeout(true)
-			h.queuePacketForRetransmission(packet) // timeout retransmission
+			log.Printf("timeout retransmission, packet %d, send time:%s, now: %s", packet.PacketNumber, packet.SendTime.String(), time.Now().String())
+			h.queuePacketForRetransmission(packet)
 			return
 		}
 	}

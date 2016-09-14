@@ -48,7 +48,6 @@ type connection struct {
 	currentDeadline time.Time
 	timerRead       bool
 	fec             *FEC
-	cryptMu         sync.Mutex
 	crypt           StreamCrypto
 	err             error
 	mutex           sync.Mutex
@@ -518,7 +517,7 @@ func (s *connection) sendPacket() error {
 		retransmitPacket := s.sentPacketHandler.DequeuePacketForRetransmission()
 
 		if retransmitPacket != nil {
-			// TODO resend flag
+			// TODO update control message
 
 			// don't resend packet which only contains ack info
 			for _, streamFrame := range retransmitPacket.segments {
@@ -586,7 +585,7 @@ func (s *connection) sendPacket() error {
 			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.PacketNumber, ack, time.Now().String())
 		}
 
-		log.Printf("%s sending packet %d to %s\n, data length: %d, data %v", s.localAddr.String(), pkt.PacketNumber, s.addr, len(pkt.D), pkt.D)
+		log.Printf("%s sending packet %d to %s\n, data length: %d", s.localAddr.String(), pkt.PacketNumber, s.addr, len(pkt.D))
 		if pkt.PacketNumber != 0 {
 			err = s.sentPacketHandler.SentPacket(pkt)
 			if err != nil {
@@ -599,11 +598,9 @@ func (s *connection) sendPacket() error {
 		if pkt.flag&0x01 != 0 {
 			log.Println("send invalid data:", pkt.D)
 		}
-		s.cryptMu.Lock()
+
 		s.crypt.Encrypt(pkt.D, pkt.D)
-		s.cryptMu.Unlock()
-		test := make([]byte, pkt.Length)
-		s.crypt.Decrypt(test, pkt.D)
+
 		_, err = s.conn.WriteTo(pkt.D, s.addr)
 		if err != nil {
 			return err
@@ -677,10 +674,8 @@ func (c *connection) sendConnectionClose(err error) {
 
 	pkt.encode()
 	//c.sentPacketHandler.SentPacket(pkt)
-	c.cryptMu.Lock()
-	c.crypt.Encrypt(pkt.D, pkt.D)
-	c.cryptMu.Unlock()
 
+	c.crypt.Encrypt(pkt.D, pkt.D)
 	c.conn.WriteTo(pkt.D, c.addr)
 }
 
