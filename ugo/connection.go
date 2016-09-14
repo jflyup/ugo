@@ -478,9 +478,16 @@ func (s *connection) handleSegment(frame *segment) error {
 //}
 
 func (s *connection) handleAckFrame(frame *AckFrame, packetNum uint32) error {
+	s.allSent.L.Lock()
+	defer s.allSent.L.Unlock()
+
 	if err := s.sentPacketHandler.ReceivedAck(frame, packetNum); err != nil {
 		return err
 	}
+	if len(s.sentPacketHandler.packetHistory) == 0 {
+		s.allSent.Signal()
+	}
+
 	return nil
 }
 
