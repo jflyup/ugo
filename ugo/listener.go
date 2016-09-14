@@ -73,7 +73,11 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 			log.Println("already connected, discard")
 		} else {
 			// feed data to connection
-			conn.receivedPackets <- buffer
+			select {
+			case conn.receivedPackets <- buffer:
+			default:
+				log.Println("queue is full, discard packet")
+			}
 		}
 	} else {
 		if len(buffer) == 22 {

@@ -236,14 +236,9 @@ func (s *connection) Read(p []byte) (int, error) {
 		//		s.flowControlManager.AddBytesRead(s.streamID, uint32(m))
 		//		s.onData() // so that a possible WINDOW_UPDATE is sent
 		if s.readPosInFrame >= frame.DataLen() {
-			fin := frame.FinBit
 			s.mutex.Lock()
 			s.segmentQueue.Pop()
 			s.mutex.Unlock()
-			if fin {
-				atomic.StoreInt32(&s.eof, 1)
-				return int(bytesRead), io.EOF
-			}
 		}
 	}
 
@@ -674,7 +669,7 @@ func (c *connection) sendConnectionClose(err error) {
 
 	pkt.encode()
 	//c.sentPacketHandler.SentPacket(pkt)
-
+	log.Printf("%s send close to %s", c.localAddr.String(), c.RemoteAddr().String())
 	c.crypt.Encrypt(pkt.D, pkt.D)
 	c.conn.WriteTo(pkt.D, c.addr)
 }
@@ -707,13 +702,13 @@ func (c *connection) getDataForWriting(maxBytes uint32) []byte {
 	} else {
 		ret = c.dataForWriting
 		c.dataForWriting = nil
+		select {
+		case c.chWrite <- struct{}{}:
+		default:
+		}
 	}
 	c.writeOffset += uint32(len(ret))
 	c.wmu.Unlock()
-	select {
-	case c.chWrite <- struct{}{}:
-	default:
-	}
 
 	return ret
 }
