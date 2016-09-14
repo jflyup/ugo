@@ -59,6 +59,7 @@ type connection struct {
 	dataForWriting []byte
 	finSent        bool
 	closeChan      chan error
+	allSent        *sync.Cond
 
 	readTimeout  time.Time // read deadline
 	writeTimeout time.Time // write deadline
@@ -88,8 +89,9 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		sendingScheduled: make(chan struct{}, 1),
 		chRead:           make(chan struct{}, 1),
 		chWrite:          make(chan struct{}, 1),
+		allSent:          &sync.Cond{L: &sync.Mutex{}},
 
-		closeChan: make(chan error, 1),
+		closeChan: make(chan error, 1), // use Close() to broadcast
 		timer:     time.NewTimer(0),
 		lastNetworkActivityTime: time.Now(),
 		crypt: crypt,
@@ -275,6 +277,7 @@ func (s *connection) Write(p []byte) (int, error) {
 
 }
 
+// TODO 2 ways(reset and graceful shutdown) to terminate a connection
 func (c *connection) Close() error {
 	_, file, no, ok := runtime.Caller(1)
 	if ok {
@@ -284,9 +287,21 @@ func (c *connection) Close() error {
 	if !atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
 		return nil
 	}
+
+	// prevent any more Write()
+	atomic.StoreInt32(&c.closed, 1)
+
+	// wait until all queued messages for the connection have been successfully sent(acked) or
+	// the timeout has been reached. kind of SO_LINGER in TCP.
+	c.allSent.L.Lock()
+	for len(c.sentPacketHandler.packetHistory) != 0 {
+		c.allSent.Wait()
+	}
+	c.allSent.L.Unlock()
+
 	c.sendConnectionClose(nil)
 	close(c.closeChan)
-	atomic.StoreInt32(&c.closed, 1)
+
 	c.closeCallback()
 	return nil
 	//return s.closeImpl(nil, true)
@@ -582,10 +597,16 @@ func (s *connection) sendPacket() error {
 
 		log.Printf("%s sending packet %d to %s\n, data length: %d", s.localAddr.String(), pkt.PacketNumber, s.addr, len(pkt.D))
 		if pkt.PacketNumber != 0 {
+			s.allSent.L.Lock()
 			err = s.sentPacketHandler.SentPacket(pkt)
 			if err != nil {
+				s.allSent.L.Unlock()
 				return err
 			}
+			if len(s.sentPacketHandler.packetHistory) == 0 {
+				s.allSent.Signal()
+			}
+			s.allSent.L.Unlock()
 		}
 
 		s.delayedAckOriginTime = time.Time{}

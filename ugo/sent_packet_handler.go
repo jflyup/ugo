@@ -70,7 +70,7 @@ func (h *sentPacketHandler) ackPacket(packetNumber uint32) *Packet {
 		/*
 		* if the packet is marked as retransmitted,
 		* it means this packet is queued for retransmission,
-		* but recv ack for it now before sending
+		* but now ack for it comes before resending
 		 */
 		// TODO
 		if h.bytesInFlight < packet.Length {
@@ -91,15 +91,6 @@ func (h *sentPacketHandler) ackPacket(packetNumber uint32) *Packet {
 	}
 
 	delete(h.packetHistory, packetNumber)
-
-	//	if packet == nil {
-	//		var array []int
-	//		for k, _ := range h.packetHistory {
-	//			array = append(array, int(k))
-	//		}
-	//		sort.Ints(array)
-	//		log.Printf("packet %d not in history, history list %v", packetNumber, array)
-	//	}
 
 	return packet
 }
@@ -143,14 +134,9 @@ func (h *sentPacketHandler) queuePacketForRetransmission(packet *Packet) {
 		}
 	}
 
-	/*
-	* strictly speaking, this is only necessary for RTO retransmissions,
-	* because Fast Retransmissions are triggered by missing ranges in ACKs,
-	* and then the LargestAcked will already be higher than the packet number of the retransmitted packet
-	 */
 	log.Printf("retransfer packet %d, flag: %d, length %d", packet.PacketNumber, packet.flag, packet.Length)
 
-	// send stopWaiting only when restransmisson happed
+	// send stopWaiting only when restransmisson happened
 	h.stopWaitingManager.SetBoundary(h.largestInOrderAcked)
 }
 
