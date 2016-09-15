@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	ErrBadAddress    = errors.New("Bad peer address")
-	ErrNotPacketConn = errors.New("Not a packet connection network")
-	ErrConnectFailed = errors.New("Connection to remote peer failed")
+	errBadAddress    = errors.New("Bad peer address")
+	errNotPacketConn = errors.New("Not a packet connection network")
+	errConnectFailed = errors.New("Connection to remote peer failed")
 )
 
 // TODO
@@ -38,7 +38,7 @@ func Dial(network, address string) (net.Conn, error) {
 	case "unix", "unixgram", "unixpacket":
 		addr, err = net.ResolveUnixAddr(network, address)
 	default:
-		return nil, ErrBadAddress
+		return nil, errBadAddress
 	}
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 		retries--
 		if retries == 0 {
 			pc.Close()
-			return nil, ErrConnectFailed
+			return nil, errConnectFailed
 		}
 	}
 

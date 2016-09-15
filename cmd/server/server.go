@@ -8,7 +8,7 @@ import (
 	"net"
 	"os"
 
-	ugo "github.com/jflyup/ugo/ugo"
+	"github.com/jflyup/ugo/ugo"
 	//"time"
 )
 

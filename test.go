@@ -8,14 +8,14 @@ import (
 	"os"
 	"time"
 
-	"./ugo"
+	"github.com/jflyup/ugo/ugo"
 )
 
 func handleClient(c net.Conn) {
 	buf := make([]byte, 2000)
 
 	c.SetDeadline(time.Now().Add(10 * time.Second))
-	var sum int = 0
+	var sum int
 	for {
 		if n, err := c.Read(buf); err == nil {
 			sum += n
@@ -41,7 +41,7 @@ func client() {
 		buf[i] = 95
 	}
 
-	var sum int = 0
+	var sum int
 	for i := 0; i < 10000; i++ {
 		if _, err := client.Write(buf); err != nil {
 			fmt.Println("error writing, exit", err)
