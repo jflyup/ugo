@@ -210,7 +210,6 @@ func (c *connection) Read(p []byte) (int, error) {
 			// wait for data or timeout
 			select {
 			case <-c.chRead:
-				log.Println("recv read event")
 				c.mutex.Lock()
 				frame = c.segmentQueue.Head()
 			case <-timeout:
@@ -525,10 +524,6 @@ func (c *connection) sendPacket() error {
 
 		stopWait := c.packetSender.GetStopWaitingFrame()
 
-		if stopWait != 0 {
-			log.Println("send stop waiting: ", stopWait)
-		}
-
 		// Check whether we are allowed to send a packet containing only an ACK
 		//maySendOnlyAck := time.Now().Sub(s.delayedAckOriginTime) > protocol.AckSendDelay
 
@@ -571,10 +566,6 @@ func (c *connection) sendPacket() error {
 
 		if pkt.flag == 0x80 {
 			pkt.packetNumber = 0
-		}
-
-		if ack != nil {
-			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.packetNumber, ack, time.Now().String())
 		}
 
 		log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))

@@ -1,9 +1,5 @@
 package ugo
 
-import (
-	"log"
-)
-
 type segmentSender struct {
 	c                   *connection
 	retransmissionQueue []*segment
@@ -26,9 +22,8 @@ func (f *segmentSender) PopSegments(maxLen uint32) []*segment {
 
 func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint32) (res []*segment, currentLen uint32) {
 	for len(f.retransmissionQueue) > 0 {
-		frame := f.retransmissionQueue[0]
+		seg := f.retransmissionQueue[0]
 
-		log.Printf("resending segment, length: %d", frame.DataLen())
 		var frameHeaderLen uint32 = 4 // TODO
 		if currentLen+frameHeaderLen > maxLen {
 			break
@@ -36,7 +31,7 @@ func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint32) (res []*s
 
 		currentLen += frameHeaderLen
 
-		splitFrame := maybeSplitOffFrame(frame, maxLen-currentLen)
+		splitFrame := maybeSplitOffFrame(seg, maxLen-currentLen)
 		if splitFrame != nil { // StreamFrame was split
 			res = append(res, splitFrame)
 			currentLen += splitFrame.DataLen()
@@ -44,8 +39,8 @@ func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint32) (res []*s
 		}
 
 		f.retransmissionQueue = f.retransmissionQueue[1:]
-		res = append(res, frame)
-		currentLen += frame.DataLen()
+		res = append(res, seg)
+		currentLen += seg.DataLen()
 	}
 	return
 }

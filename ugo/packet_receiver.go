@@ -2,7 +2,6 @@ package ugo
 
 import (
 	"errors"
-	"fmt"
 	//"log"
 	"time"
 )
@@ -107,8 +106,6 @@ func (h *packetReceiver) ReceivedStopWaiting(f uint32) error {
 		h.ignorePacketsBelow = n
 		h.garbageCollectReceivedTimes()
 	}
-
-	fmt.Printf("recv handle stop waiting %d, ack range %v\n", f, ackRanges)
 
 	return nil
 }
