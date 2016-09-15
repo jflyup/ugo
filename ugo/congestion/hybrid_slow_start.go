@@ -3,7 +3,7 @@ package congestion
 import (
 	"time"
 
-	"../utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
 // Note(pwestin): the magic clamping numbers come from the original code in

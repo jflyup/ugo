@@ -6,7 +6,7 @@ import (
 	"crypto/rc4"
 )
 
-type StreamCrypto interface {
+type streamCrypto interface {
 	Encrypt(dst, src []byte)
 	Decrypt(dst, src []byte)
 }

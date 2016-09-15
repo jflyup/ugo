@@ -9,38 +9,38 @@ import (
 
 var (
 	// ErrDuplicatePacket occurres when a duplicate packet is received
-	ErrDuplicatePacket = errors.New("ReceivedPacketHandler: Duplicate Packet")
+	ErrDuplicatePacket = errors.New("packetReceiver: Duplicate Packet")
 	// ErrPacketSmallerThanLastStopWaiting occurs when a packet arrives with a packet number smaller than the largest LeastUnacked of a StopWaitingFrame. If this error occurs, the packet should be ignored
-	ErrPacketSmallerThanLastStopWaiting = errors.New("ReceivedPacketHandler: Packet number smaller than highest StopWaiting")
+	ErrPacketSmallerThanLastStopWaiting = errors.New("packetReceiver: Packet number smaller than highest StopWaiting")
 )
 
 var (
-	errInvalidPacketNumber               = errors.New("ReceivedPacketHandler: Invalid packet number")
+	errInvalidPacketNumber               = errors.New("packetReceiver: Invalid packet number")
 	errTooManyOutstandingReceivedPackets = errors.New("TooManyOutstandingReceivedPackets")
 )
 
-type receivedPacketHandler struct {
+type packetReceiver struct {
 	largestInOrderObserved uint32
 	largestObserved        uint32
 	ignorePacketsBelow     uint32
-	currentAckFrame        *AckFrame
+	currentAckFrame        *sack
 	stateChanged           bool // has an ACK for this state already been sent? Will be set to false every time a new packet arrives, and to false every time an ACK is sent
 
-	packetHistory *receivedPacketHistory
+	packetHistory *recvHistory
 
 	receivedTimes         map[uint32]time.Time
 	lowestInReceivedTimes uint32
 }
 
 // NewReceivedPacketHandler creates a new receivedPacketHandler
-func newReceivedPacketHandler() *receivedPacketHandler {
-	return &receivedPacketHandler{
+func newReceivedPacketHandler() *packetReceiver {
+	return &packetReceiver{
 		receivedTimes: make(map[uint32]time.Time),
-		packetHistory: newReceivedPacketHistory(),
+		packetHistory: newRecvHistory(),
 	}
 }
 
-func (h *receivedPacketHandler) ReceivedPacket(packetNumber uint32) error {
+func (h *packetReceiver) ReceivedPacket(packetNumber uint32) error {
 	if packetNumber == 0 {
 		return errInvalidPacketNumber
 	}
@@ -81,7 +81,7 @@ func (h *receivedPacketHandler) ReceivedPacket(packetNumber uint32) error {
 	return nil
 }
 
-func (h *receivedPacketHandler) ReceivedStopWaiting(f uint32) error {
+func (h *packetReceiver) ReceivedStopWaiting(f uint32) error {
 	h.stateChanged = true
 	// ignore if StopWaiting is unneeded, because we already received a StopWaiting with a higher LeastUnacked
 	if h.ignorePacketsBelow >= f {
@@ -113,7 +113,7 @@ func (h *receivedPacketHandler) ReceivedStopWaiting(f uint32) error {
 	return nil
 }
 
-func (h *receivedPacketHandler) GetAckFrame(dequeue bool) (*AckFrame, error) {
+func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
 	if !h.stateChanged {
 		return nil, nil
 	}
@@ -132,7 +132,7 @@ func (h *receivedPacketHandler) GetAckFrame(dequeue bool) (*AckFrame, error) {
 	//	}
 	packetReceivedTime := time.Now()
 	ackRanges := h.packetHistory.GetAckRanges()
-	h.currentAckFrame = &AckFrame{
+	h.currentAckFrame = &sack{
 		LargestAcked:   h.largestObserved,
 		LargestInOrder: ackRanges[len(ackRanges)-1].FirstPacketNumber,
 		//LargestInOrder:     h.largestInOrderObserved,
@@ -146,7 +146,7 @@ func (h *receivedPacketHandler) GetAckFrame(dequeue bool) (*AckFrame, error) {
 	return h.currentAckFrame, nil
 }
 
-func (h *receivedPacketHandler) garbageCollectReceivedTimes() {
+func (h *packetReceiver) garbageCollectReceivedTimes() {
 	for i := h.lowestInReceivedTimes; i <= h.ignorePacketsBelow; i++ {
 		delete(h.receivedTimes, i)
 	}

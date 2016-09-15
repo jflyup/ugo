@@ -8,7 +8,7 @@ import (
 	"net"
 	"os"
 
-	"../../ugo"
+	ugo "github.com/jflyup/ugo/ugo"
 	//"time"
 )
 
@@ -16,7 +16,7 @@ func relay(in, out net.Conn) {
 	if _, err := io.Copy(in, out); err != nil {
 		log.Println("copy error", err)
 	}
-	in.Close() // will trigger an error in the other relay which will call out.Close()
+	in.Close() // will trigger an error in the other relay which would call out.Close()
 }
 
 func handleClient(c net.Conn) {
@@ -31,14 +31,14 @@ func handleClient(c net.Conn) {
 	buf := make([]byte, addrLen)
 	c.Read(buf)
 	log.Println("raw addr: ", string(buf))
-	if proxyConn, err := net.Dial("tcp", string(buf)); err != nil {
+	proxyConn, err := net.Dial("tcp", string(buf))
+	if err != nil {
 		log.Println("error on Dial", err)
 		c.Close()
 		return
-	} else {
-		go relay(c, proxyConn)
-		go relay(proxyConn, c)
 	}
+	go relay(c, proxyConn)
+	go relay(proxyConn, c)
 }
 
 func main() {

@@ -3,24 +3,24 @@ package ugo
 import (
 	"sync"
 
-	"./utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
-type receivedPacketHistory struct {
+type recvHistory struct {
 	ranges *utils.PacketIntervalList
 
 	mutex sync.RWMutex
 }
 
 // newReceivedPacketHistory creates a new received packet history
-func newReceivedPacketHistory() *receivedPacketHistory {
-	return &receivedPacketHistory{
+func newRecvHistory() *recvHistory {
+	return &recvHistory{
 		ranges: utils.NewPacketIntervalList(),
 	}
 }
 
 // ReceivedPacket registers a packet with PacketNumber p and updates the ranges
-func (h *receivedPacketHistory) ReceivedPacket(p uint32) {
+func (h *recvHistory) ReceivedPacket(p uint32) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
@@ -66,7 +66,7 @@ func (h *receivedPacketHistory) ReceivedPacket(p uint32) {
 	h.ranges.InsertBefore(utils.PacketInterval{Start: p, End: p}, h.ranges.Front())
 }
 
-func (h *receivedPacketHistory) DeleteBelow(leastUnacked uint32) {
+func (h *recvHistory) DeleteBelow(leastUnacked uint32) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
@@ -86,7 +86,7 @@ func (h *receivedPacketHistory) DeleteBelow(leastUnacked uint32) {
 }
 
 // GetAckRanges gets a slice of all AckRanges that can be used in an AckFrame
-func (h *receivedPacketHistory) GetAckRanges() []AckRange {
+func (h *recvHistory) GetAckRanges() []sackRange {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
 
@@ -94,10 +94,10 @@ func (h *receivedPacketHistory) GetAckRanges() []AckRange {
 		return nil
 	}
 
-	var ackRanges []AckRange
+	var ackRanges []sackRange
 
 	for el := h.ranges.Back(); el != nil; el = el.Prev() {
-		ackRanges = append(ackRanges, AckRange{FirstPacketNumber: el.Value.Start, LastPacketNumber: el.Value.End})
+		ackRanges = append(ackRanges, sackRange{FirstPacketNumber: el.Value.Start, LastPacketNumber: el.Value.End})
 	}
 
 	return ackRanges

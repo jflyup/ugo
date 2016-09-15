@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	PacketInit = 0
+	packetInit = 0
 )
 
 type EncryptType byte
@@ -15,11 +15,10 @@ const (
 )
 
 const (
-	fecHeaderSize      = 6
-	fecHeaderSizePlus2 = fecHeaderSize + 2 // plus 2B data size
-	typeData           = 0xf1
-	typeFEC            = 0xf2
-	fecExpire          = 30000 // 30s
+	fecHeaderSize = 6
+	typeData      = 0xf1
+	typeFEC       = 0xf2
+	fecExpire     = 30000 // 30s
 )
 
 // IPv4 minimum reassembly buffer size is 576, IPv6 has it at 1500.

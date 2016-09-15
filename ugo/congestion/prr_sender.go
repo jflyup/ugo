@@ -3,7 +3,7 @@ package congestion
 import (
 	"time"
 
-	"../utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
 // PrrSender implements the Proportional Rate Reduction (PRR) per RFC 6937

@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"./protocol"
+	"github.com/jflyup/ugo/ugo/protocol"
 
-	"./utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
 var (
@@ -28,9 +28,9 @@ type connection struct {
 	addr      net.Addr
 	localAddr net.Addr
 
-	sentPacketHandler     *sentPacketHandler
-	receivedPacketHandler *receivedPacketHandler
-	segmentSender         *segmentSender
+	packetSender   *packetSender
+	packetReceiver *packetReceiver
+	segmentSender  *segmentSender
 
 	receivedPackets  chan []byte
 	sendingScheduled chan struct{}
@@ -48,7 +48,7 @@ type connection struct {
 	currentDeadline time.Time
 	timerRead       bool
 	fec             *FEC
-	crypt           StreamCrypto
+	crypt           streamCrypto
 	err             error
 	mutex           sync.Mutex
 	wmu             sync.Mutex
@@ -72,7 +72,7 @@ type connection struct {
 	lastPacketNumber uint32
 }
 
-func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt StreamCrypto, fec *FEC, close func()) *connection {
+func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt streamCrypto, fec *FEC, close func()) *connection {
 	c := &connection{
 		connectionID:  connectionID,
 		conn:          pc,
@@ -80,8 +80,8 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		localAddr:     pc.LocalAddr(),
 		closeCallback: close,
 
-		sentPacketHandler:     newSentPacketHandler(),
-		receivedPacketHandler: newReceivedPacketHandler(),
+		packetSender:   newPacketSender(),
+		packetReceiver: newReceivedPacketHandler(),
 
 		segmentQueue: newStreamFrameSorter(), // used for incoming segments reordering
 
@@ -91,7 +91,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		chWrite:          make(chan struct{}, 1),
 		allSent:          &sync.Cond{L: &sync.Mutex{}},
 
-		closeChan: make(chan error, 1), // use Close() to broadcast
+		closeChan: make(chan error, 1), // use Close(closeChan) to broadcast
 		timer:     time.NewTimer(0),
 		lastNetworkActivityTime: time.Now(),
 		crypt: crypt,
@@ -103,7 +103,6 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 	return c
 }
 
-// run the session main loop
 func (c *connection) run() {
 	for {
 		// Close immediately if requested
@@ -157,120 +156,120 @@ func (c *connection) run() {
 }
 
 // Implementation of the Conn interface.
-func (s *connection) Read(p []byte) (int, error) {
-	if atomic.LoadInt32(&s.eof) != 0 {
+func (c *connection) Read(p []byte) (int, error) {
+	if atomic.LoadInt32(&c.eof) != 0 {
 		return 0, io.EOF
 	}
 
 	bytesRead := 0
 	for bytesRead < len(p) {
-		s.mutex.Lock()
-		frame := s.segmentQueue.Head()
+		c.mutex.Lock()
+		frame := c.segmentQueue.Head()
 
 		if frame == nil && bytesRead > 0 {
-			s.mutex.Unlock()
-			return bytesRead, s.err
+			c.mutex.Unlock()
+			return bytesRead, c.err
 		}
 
-		if !s.readTimeout.IsZero() {
-			if time.Now().After(s.readTimeout) { // timeout
-				s.mutex.Unlock()
+		if !c.readTimeout.IsZero() {
+			if time.Now().After(c.readTimeout) { // timeout
+				c.mutex.Unlock()
 				return bytesRead, errTimeout
 			}
 		}
 
 		for {
 			// Stop waiting on errors
-			if s.err != nil {
+			if c.err != nil {
 				break
 			}
 			if frame != nil {
 				// Pop and continue if the frame doesn't have any new data
-				if frame.Offset+frame.DataLen() <= s.readOffset {
-					s.segmentQueue.Pop()
-					frame = s.segmentQueue.Head()
+				if frame.Offset+frame.DataLen() <= c.readOffset {
+					c.segmentQueue.Pop()
+					frame = c.segmentQueue.Head()
 
 					continue
 				}
 				// If the frame's offset is <= our current read pos, and we didn't
 				// go into the previous if, we can read data from the frame.
-				if frame.Offset <= s.readOffset {
+				if frame.Offset <= c.readOffset {
 					// Set our read position in the frame properly
-					s.readPosInFrame = s.readOffset - frame.Offset
+					c.readPosInFrame = c.readOffset - frame.Offset
 					break
 				}
 			}
 
-			s.mutex.Unlock()
+			c.mutex.Unlock()
 			var timeout <-chan time.Time
-			if !s.readTimeout.IsZero() {
-				delay := s.readTimeout.Sub(time.Now())
+			if !c.readTimeout.IsZero() {
+				delay := c.readTimeout.Sub(time.Now())
 				timeout = time.After(delay)
 			}
 
 			// wait for data or timeout
 			select {
-			case <-s.chRead:
+			case <-c.chRead:
 				log.Println("recv read event")
-				s.mutex.Lock()
-				frame = s.segmentQueue.Head()
+				c.mutex.Lock()
+				frame = c.segmentQueue.Head()
 			case <-timeout:
 				return bytesRead, errTimeout
-			case <-s.closeChan:
+			case <-c.closeChan:
 				return 0, io.ErrClosedPipe
 			}
 		}
-		s.mutex.Unlock()
+		c.mutex.Unlock()
 
 		if frame == nil {
-			atomic.StoreInt32(&s.eof, 1)
+			atomic.StoreInt32(&c.eof, 1)
 			// We have an err and no data, return the error
-			return bytesRead, s.err
+			return bytesRead, c.err
 		}
 
-		m := uint32(utils.Min(len(p)-bytesRead, int(frame.DataLen())) - int(s.readPosInFrame))
-		copy(p[bytesRead:], frame.Data[s.readPosInFrame:])
+		m := uint32(utils.Min(len(p)-bytesRead, int(frame.DataLen())) - int(c.readPosInFrame))
+		copy(p[bytesRead:], frame.data[c.readPosInFrame:])
 
-		s.readPosInFrame += m
+		c.readPosInFrame += m
 		bytesRead += int(m)
-		s.readOffset += m
+		c.readOffset += m
 
 		//		s.flowControlManager.AddBytesRead(s.streamID, uint32(m))
 		//		s.onData() // so that a possible WINDOW_UPDATE is sent
-		if s.readPosInFrame >= frame.DataLen() {
-			s.mutex.Lock()
-			s.segmentQueue.Pop()
-			s.mutex.Unlock()
+		if c.readPosInFrame >= frame.DataLen() {
+			c.mutex.Lock()
+			c.segmentQueue.Pop()
+			c.mutex.Unlock()
 		}
 	}
 
 	return bytesRead, nil
 }
 
-func (s *connection) Write(p []byte) (int, error) {
-	if atomic.LoadInt32(&s.closed) != 0 {
+func (c *connection) Write(p []byte) (int, error) {
+	if atomic.LoadInt32(&c.closed) != 0 {
 		return 0, io.ErrClosedPipe
 	}
-	s.wmu.Lock()
+	c.wmu.Lock()
 
-	s.dataForWriting = make([]byte, len(p))
-	copy(s.dataForWriting, p)
-	s.wmu.Unlock()
-	s.scheduleSending()
+	c.dataForWriting = make([]byte, len(p))
+	copy(c.dataForWriting, p)
+	c.wmu.Unlock()
+	c.scheduleSending()
 
 	var timeout <-chan time.Time
-	if !s.writeTimeout.IsZero() {
-		delay := s.writeTimeout.Sub(time.Now())
+	if !c.writeTimeout.IsZero() {
+		delay := c.writeTimeout.Sub(time.Now())
 		timeout = time.After(delay)
 	}
 
 	for {
 		select {
-		case <-s.chWrite:
+		case <-c.chWrite:
 			return len(p), nil
 		case <-timeout:
 			return 0, errTimeout
-		case <-s.closeChan:
+		case <-c.closeChan:
 			return 0, io.ErrClosedPipe
 		}
 	}
@@ -281,7 +280,7 @@ func (s *connection) Write(p []byte) (int, error) {
 func (c *connection) Close() error {
 	_, file, no, ok := runtime.Caller(1)
 	if ok {
-		fmt.Printf("called from %s#%d\n", file, no)
+		log.Printf("called from %s#%d\n", file, no)
 	}
 	// Only close once
 	if !atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
@@ -294,7 +293,7 @@ func (c *connection) Close() error {
 	// wait until all queued messages for the connection have been successfully sent(acked) or
 	// the timeout has been reached. kind of SO_LINGER in TCP.
 	c.allSent.L.Lock()
-	for len(c.sentPacketHandler.packetHistory) != 0 {
+	for len(c.packetSender.packetHistory) != 0 {
 		c.allSent.Wait()
 	}
 	c.allSent.L.Unlock()
@@ -304,7 +303,6 @@ func (c *connection) Close() error {
 
 	c.closeCallback()
 	return nil
-	//return s.closeImpl(nil, true)
 }
 
 func (c *connection) LocalAddr() net.Addr {
@@ -341,7 +339,7 @@ func (c *connection) resetTimer() {
 	if !c.delayedAckOriginTime.IsZero() {
 		nextDeadline = utils.MinTime(nextDeadline, c.delayedAckOriginTime.Add(protocol.AckSendDelay))
 	}
-	if rtoTime := c.sentPacketHandler.TimeOfFirstRTO(); !rtoTime.IsZero() {
+	if rtoTime := c.packetSender.TimeOfFirstRTO(); !rtoTime.IsZero() {
 		nextDeadline = utils.MinTime(nextDeadline, rtoTime)
 	}
 
@@ -350,8 +348,7 @@ func (c *connection) resetTimer() {
 		return
 	}
 
-	// We need to drain the timer if the value from its channel was not read yet.
-	// See https://groups.google.com/forum/#!topic/golang-dev/c9UUfASVPoU
+	// drain the timer if the value from its channel was not read yet.
 	if !c.timer.Stop() && !c.timerRead {
 		<-c.timer.C
 	}
@@ -367,6 +364,7 @@ func (c *connection) handlePacket(data []byte) error {
 	c.crypt.Decrypt(data, data)
 	// TODO check data integrity
 	if c.fec != nil {
+		// TODO
 		f := c.fec.decode(data)
 		if f.Flag() == typeData || f.Flag() == typeFEC {
 			if recovered := c.fec.input(f); recovered != nil {
@@ -383,45 +381,42 @@ func (c *connection) handlePacket(data []byte) error {
 
 	// TODO reference count buffer
 	p := &Packet{
-		D: make([]byte, len(data)),
+		rawData: make([]byte, len(data)),
 	}
 
-	copy(p.D[0:], data)
-	p.Length = uint32(len(p.D))
+	copy(p.rawData[0:], data)
+	p.Length = uint32(len(p.rawData))
 	// decode
 	if err := p.decode(); err != nil {
-		log.Printf("err: %v, recv invalid data: %v from %s", err, p.D, c.addr.String())
+		log.Printf("err: %v, recv invalid data: %v from %s", err, p.rawData, c.addr.String())
 		return err
 	}
 
-	log.Printf("%s recv packet %d, length %d", c.localAddr.String(), p.PacketNumber, p.Length)
-	if p.flag == 128 {
-		log.Println("recv ack", p.ackFrame, time.Now().String())
-	}
+	log.Printf("%s recv packet %d, length %d", c.localAddr.String(), p.packetNumber, p.Length)
 
 	if p.flag&0x01 != 0 {
-		log.Println("recv weird data:", p.D)
+		log.Println("recv weird data:", p.rawData)
 		// TODO should close the connection
 		return nil
 	}
 
 	if p.flag == 0x10 {
-		log.Println("recv close:", p.PacketNumber)
+		log.Println("recv close:", p.packetNumber)
 		// peer has already gone
 		// no TIME_WAIT CLOSE_WAIT like TCP
 		c.Close()
 		return nil
 	}
 
-	if p.PacketNumber != 0 {
-		if err := c.receivedPacketHandler.ReceivedPacket(p.PacketNumber); err != nil {
-			log.Printf("recv packets error %v, rcvhistory %v", err, c.receivedPacketHandler.packetHistory.ranges.Len())
+	if p.packetNumber != 0 {
+		if err := c.packetReceiver.ReceivedPacket(p.packetNumber); err != nil {
+			log.Printf("recv packets error %v, recv history %v", err, c.packetReceiver.packetHistory.ranges.Len())
 			return err
 		}
 	}
 
-	if p.ackFrame != nil {
-		if err := c.handleAckFrame(p.ackFrame, p.PacketNumber); err != nil {
+	if p.sack != nil {
+		if err := c.handleAckFrame(p.sack, p.packetNumber); err != nil {
 			return err
 		}
 	}
@@ -434,66 +429,47 @@ func (c *connection) handlePacket(data []byte) error {
 
 	if p.stopWaiting != 0 {
 		log.Printf("recv stop waiting %d from %s", p.stopWaiting, c.addr.String())
-		c.receivedPacketHandler.ReceivedStopWaiting(p.stopWaiting)
+		c.packetReceiver.ReceivedStopWaiting(p.stopWaiting)
 	}
 
 	return nil
 }
 
-func (s *connection) handleSegment(frame *segment) error {
-	s.mutex.Lock()
+func (c *connection) handleSegment(s *segment) error {
+	c.mutex.Lock()
 
-	err := s.segmentQueue.Push(frame)
+	err := c.segmentQueue.Push(s)
 	if err != nil && err != errDuplicateStreamData {
-		s.mutex.Unlock()
+		c.mutex.Unlock()
 		return err
 	}
-	s.mutex.Unlock()
+	c.mutex.Unlock()
 
 	select {
-	case s.chRead <- struct{}{}:
+	case c.chRead <- struct{}{}:
 	default:
 	}
 
 	return nil
 }
 
-//func (s *session) handleWindowUpdateFrame(frame *frames.WindowUpdateFrame) error {
-//	s.streamsMutex.RLock()
-//	defer s.streamsMutex.RUnlock()
-//	if frame.StreamID != 0 {
-//		stream, ok := s.streams[frame.StreamID]
-//		if ok && stream == nil {
-//			return errWindowUpdateOnClosedStream
-//		}
+func (c *connection) handleAckFrame(frame *sack, packetNum uint32) error {
+	c.allSent.L.Lock()
+	defer c.allSent.L.Unlock()
 
-//		// open new stream when receiving a WindowUpdate for a non-existing stream
-//		// this can occur if the client immediately sends a WindowUpdate for a newly opened stream, and packet reordering occurs such that the packet opening the new stream arrives after the WindowUpdate
-//		if !ok {
-//			s.newStreamImpl(frame.StreamID)
-//		}
-//	}
-//	_, err := s.flowControlManager.UpdateWindow(frame.StreamID, frame.ByteOffset)
-//	return err
-//}
-
-func (s *connection) handleAckFrame(frame *AckFrame, packetNum uint32) error {
-	s.allSent.L.Lock()
-	defer s.allSent.L.Unlock()
-
-	if err := s.sentPacketHandler.ReceivedAck(frame, packetNum); err != nil {
+	if err := c.packetSender.ReceivedAck(frame, packetNum); err != nil {
 		return err
 	}
-	if len(s.sentPacketHandler.packetHistory) == 0 {
-		s.allSent.Signal()
+	if len(c.packetSender.packetHistory) == 0 {
+		c.allSent.Signal()
 	}
 
 	return nil
 }
 
-// Close the connection. If err is nil it will be set to qerr.PeerGoingAway.
-func (s *connection) CloseWithError(e error) error {
-	return s.closeImpl(e, false)
+// TODO
+func (c *connection) CloseWithError(e error) error {
+	return c.closeImpl(e, false)
 }
 
 func (c *connection) closeImpl(e error, remoteClose bool) error {
@@ -510,28 +486,27 @@ func (c *connection) closeImpl(e error, remoteClose bool) error {
 		return nil
 	}
 
-	//s.closeChan <- quicErr
 	return nil
 }
 
-func (s *connection) sendPacket() error {
+func (c *connection) sendPacket() error {
 	// Repeatedly try sending until we don't have any more data, or run out of the congestion window
-	if atomic.LoadInt32(&s.closed) != 0 {
+	if atomic.LoadInt32(&c.closed) != 0 {
 		return nil
 	}
 	// TODO split send and recv in 2 goroutine
 	for {
-		err := s.sentPacketHandler.CheckForError()
+		err := c.packetSender.CheckForError()
 		if err != nil {
 			return err
 		}
 
-		if !s.sentPacketHandler.CongestionAllowsSending() {
-			log.Printf("congestion not allow, size: %d, bytes outstanding: %d", s.sentPacketHandler.congestion.GetCongestionWindow(), s.sentPacketHandler.BytesInFlight())
+		if !c.packetSender.CongestionAllowsSending() {
+			log.Printf("congestion not allow, size: %d, bytes outstanding: %d", c.packetSender.congestion.GetCongestionWindow(), c.packetSender.BytesInFlight())
 			return nil
 		}
 
-		retransmitPacket := s.sentPacketHandler.DequeuePacketForRetransmission()
+		retransmitPacket := c.packetSender.DequeuePacketForRetransmission()
 
 		if retransmitPacket != nil {
 			// TODO update control message
@@ -539,16 +514,16 @@ func (s *connection) sendPacket() error {
 			// don't resend packet which only contains ack info
 			for _, streamFrame := range retransmitPacket.segments {
 				log.Println("retransmit segment", streamFrame.Offset)
-				s.segmentSender.AddSegmentForRetransmission(streamFrame)
+				c.segmentSender.AddSegmentForRetransmission(streamFrame)
 			}
 		}
 
-		ack, err := s.receivedPacketHandler.GetAckFrame(false)
+		ack, err := c.packetReceiver.GetAckFrame(false)
 		if err != nil {
 			return err
 		}
 
-		stopWait := s.sentPacketHandler.GetStopWaitingFrame()
+		stopWait := c.packetSender.GetStopWaitingFrame()
 
 		if stopWait != 0 {
 			log.Println("send stop waiting: ", stopWait)
@@ -558,7 +533,7 @@ func (s *connection) sendPacket() error {
 		//maySendOnlyAck := time.Now().Sub(s.delayedAckOriginTime) > protocol.AckSendDelay
 
 		// get data
-		frames := s.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
+		frames := c.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
 
 		if ack == nil && len(frames) == 0 && stopWait == 0 {
 			return nil
@@ -566,7 +541,7 @@ func (s *connection) sendPacket() error {
 
 		// Pop the ACK frame now that we are sure we're gonna send it
 		if ack != nil {
-			_, err = s.receivedPacketHandler.GetAckFrame(true)
+			_, err = c.packetReceiver.GetAckFrame(true)
 			if err != nil {
 				return err
 			}
@@ -579,12 +554,12 @@ func (s *connection) sendPacket() error {
 		//		}
 
 		if len(frames) != 0 || stopWait != 0 { // ack only
-			s.lastPacketNumber++
+			c.lastPacketNumber++
 		}
 
 		pkt := &Packet{
-			PacketNumber: s.lastPacketNumber,
-			ackFrame:     ack,
+			packetNumber: c.lastPacketNumber,
+			sack:         ack,
 			segments:     frames,
 			stopWaiting:  stopWait,
 		}
@@ -595,36 +570,36 @@ func (s *connection) sendPacket() error {
 		}
 
 		if pkt.flag == 0x80 {
-			pkt.PacketNumber = 0
+			pkt.packetNumber = 0
 		}
 
 		if ack != nil {
-			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.PacketNumber, ack, time.Now().String())
+			log.Printf("send ack, pkt num:%d, ack %v, time %s", pkt.packetNumber, ack, time.Now().String())
 		}
 
-		log.Printf("%s sending packet %d to %s\n, data length: %d", s.localAddr.String(), pkt.PacketNumber, s.addr, len(pkt.D))
-		if pkt.PacketNumber != 0 {
-			s.allSent.L.Lock()
-			err = s.sentPacketHandler.SentPacket(pkt)
+		log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))
+		if pkt.packetNumber != 0 {
+			c.allSent.L.Lock()
+			err = c.packetSender.SentPacket(pkt)
 			if err != nil {
-				s.allSent.L.Unlock()
+				c.allSent.L.Unlock()
 				return err
 			}
-			if len(s.sentPacketHandler.packetHistory) == 0 {
-				s.allSent.Signal()
+			if len(c.packetSender.packetHistory) == 0 {
+				c.allSent.Signal()
 			}
-			s.allSent.L.Unlock()
+			c.allSent.L.Unlock()
 		}
 
-		s.delayedAckOriginTime = time.Time{}
+		c.delayedAckOriginTime = time.Time{}
 
 		if pkt.flag&0x01 != 0 {
-			log.Println("send invalid data:", pkt.D)
+			log.Println("send invalid data:", pkt.rawData)
 		}
 
-		s.crypt.Encrypt(pkt.D, pkt.D)
+		c.crypt.Encrypt(pkt.rawData, pkt.rawData)
 
-		_, err = s.conn.WriteTo(pkt.D, s.addr)
+		_, err = c.conn.WriteTo(pkt.rawData, c.addr)
 		if err != nil {
 			return err
 		}
@@ -668,18 +643,6 @@ func (s *connection) sendPacket() error {
 //				fecMaxSize = 0
 //			}
 //		}
-
-//		// Encrypt
-//		s.crypt.Encrypt(oriData, oriData)
-//		if ecc != nil {
-//			for k := range ecc {
-//				s.crypt.Encrypt(ecc[k], ecc[k])
-//			}
-//		}
-
-//		fmt.Printf("send to %v %d bytes\n", addr, len(oriData))
-//		c.WriteTo(oriData, addr)
-//		packet.Free()
 //		if ecc != nil {
 //			for k := range ecc {
 //				c.WriteTo(ecc[k], addr)
@@ -692,14 +655,14 @@ func (c *connection) sendConnectionClose(err error) {
 	//c.lastPacketNumber++
 	pkt := &Packet{
 		flag:         0x10,
-		PacketNumber: 0,
+		packetNumber: 0,
 	}
 
 	pkt.encode()
 	//c.sentPacketHandler.SentPacket(pkt)
 	log.Printf("%s send close to %s", c.localAddr.String(), c.RemoteAddr().String())
-	c.crypt.Encrypt(pkt.D, pkt.D)
-	c.conn.WriteTo(pkt.D, c.addr)
+	c.crypt.Encrypt(pkt.rawData, pkt.rawData)
+	c.conn.WriteTo(pkt.rawData, c.addr)
 }
 
 // scheduleSending signals that we have data for sending

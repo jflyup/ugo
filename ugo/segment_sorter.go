@@ -3,9 +3,9 @@ package ugo
 import (
 	"errors"
 
-	"./protocol"
+	"github.com/jflyup/ugo/ugo/protocol"
 
-	"./utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
 type segmentSorter struct {
@@ -40,10 +40,6 @@ func (s *segmentSorter) Push(frame *segment) error {
 	end := frame.Offset + frame.DataLen()
 
 	if start == end {
-		if frame.FinBit {
-			s.queuedFrames[frame.Offset] = frame
-			return nil
-		}
 		return errEmptyStreamData
 	}
 

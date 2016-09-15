@@ -10,7 +10,7 @@ import (
 	"net"
 	"time"
 
-	"./protocol"
+	"github.com/jflyup/ugo/ugo/protocol"
 )
 
 var (
@@ -59,20 +59,20 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 
 	// generate INIT packet
 	initPacket := &Packet{
-		D: make([]byte, 22),
+		rawData: make([]byte, 22),
 	}
-	initPacket.D[0] = byte(PacketInit)
-	initPacket.D[1] = byte(AESEncrypt)
+	initPacket.rawData[0] = byte(packetInit)
+	initPacket.rawData[1] = byte(AESEncrypt)
 
-	copy(initPacket.D[2:18], iv[:])
-	copy(initPacket.D[18:22], connectionID[:])
+	copy(initPacket.rawData[2:18], iv[:])
+	copy(initPacket.rawData[18:22], connectionID[:])
 
 	// negotiation
 	retries := 5
 	buffer := make([]byte, 65536)
 	var peerConnID protocol.ConnectionID
 	for {
-		_, err := pc.WriteTo(initPacket.D, addr)
+		_, err := pc.WriteTo(initPacket.rawData, addr)
 		if err != nil {
 			pc.Close()
 			return nil, err

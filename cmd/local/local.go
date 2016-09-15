@@ -11,7 +11,7 @@ import (
 	"os"
 	"strconv"
 
-	"../../ugo"
+	ugo "github.com/jflyup/ugo/ugo"
 	//"time"
 )
 

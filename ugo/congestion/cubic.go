@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"../utils"
+	"github.com/jflyup/ugo/ugo/utils"
 )
 
 // This cubic implementation is based on the one found in Chromiums's QUIC

@@ -8,10 +8,10 @@ import (
 	"net"
 	"sync"
 
-	"./protocol"
+	"github.com/jflyup/ugo/ugo/protocol"
 )
 
-var ErrListenerClosed = errors.New("Listener has been closed")
+var errListenerClosed = errors.New("Listener has been closed")
 
 type listener struct {
 	sync.Cond
@@ -69,7 +69,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	if conn, ok := l.connections[remoteAddr.String()]; ok {
 		// TODO check data integrity
 
-		if len(buffer) == 22 && buffer[0] == PacketInit {
+		if len(buffer) == 22 && buffer[0] == packetInit {
 			log.Println("already connected, discard")
 		} else {
 			// feed data to connection
@@ -82,7 +82,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	} else {
 		if len(buffer) == 22 {
 			// TODO Connection migration
-			if buffer[0] == PacketInit {
+			if buffer[0] == packetInit {
 				//iv := buffer[2:18]
 				clientConnectionID := protocol.ConnectionID(binary.BigEndian.Uint32(buffer[18:22]))
 
@@ -129,7 +129,7 @@ func (l *listener) Close() error {
 	l.L.Lock()
 	err := l.err
 	if err == nil {
-		l.err = ErrListenerClosed
+		l.err = errListenerClosed
 	}
 	l.L.Unlock()
 	l.Broadcast()

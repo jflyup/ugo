@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"./protocol"
+	"github.com/jflyup/ugo/ugo/protocol"
 
 	"github.com/klauspost/reedsolomon"
 )

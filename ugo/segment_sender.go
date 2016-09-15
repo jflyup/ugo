@@ -83,7 +83,7 @@ func (f *segmentSender) maybePopNormalFrames(maxBytes uint32) (res []*segment) {
 		return
 	}
 
-	frame.Data = data
+	frame.data = data
 	//f.flowControlManager.AddBytesSent(s.streamID, uint32(len(data)))
 
 	res = append(res, frame)
@@ -99,13 +99,12 @@ func maybeSplitOffFrame(frame *segment, n uint32) *segment {
 	}
 
 	defer func() {
-		frame.Data = frame.Data[n:]
+		frame.data = frame.data[n:]
 		frame.Offset += n
 	}()
 
 	return &segment{
-		FinBit: false,
 		Offset: frame.Offset,
-		Data:   frame.Data[:n],
+		data:   frame.data[:n],
 	}
 }
