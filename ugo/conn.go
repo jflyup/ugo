@@ -38,7 +38,8 @@ type connection struct {
 	closed int32 // atomic bool
 	eof    int32 // really a bool
 
-	delayedAckOriginTime time.Time
+	ackNoDelay    bool
+	originAckTime time.Time
 
 	lastRcvdPacketNumber uint32
 
@@ -81,9 +82,9 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		closeCallback: close,
 
 		packetSender:   newPacketSender(),
-		packetReceiver: newReceivedPacketHandler(),
+		packetReceiver: newPacketReceiver(),
 
-		segmentQueue: newStreamFrameSorter(), // used for incoming segments reordering
+		segmentQueue: newSegmentSorter(), // used for incoming segments reordering
 
 		receivedPackets:  make(chan []byte, 1024),
 		sendingScheduled: make(chan struct{}, 1),
@@ -132,8 +133,8 @@ func (c *connection) run() {
 		case p := <-c.receivedPackets:
 			err = c.handlePacket(p)
 
-			if c.delayedAckOriginTime.IsZero() {
-				c.delayedAckOriginTime = time.Now()
+			if c.originAckTime.IsZero() {
+				c.originAckTime = time.Now()
 			}
 		}
 
@@ -289,8 +290,8 @@ func (c *connection) Close() error {
 	// prevent any more Write()
 	atomic.StoreInt32(&c.closed, 1)
 
-	// wait until all queued messages for the connection have been successfully sent(acked) or
-	// the timeout has been reached. kind of SO_LINGER in TCP.
+	// wait until all queued messages for the connection have been successfully sent(sent and acked) or
+	// the timeout has been reached. kind of SO_LINGER option in TCP.
 	c.allSent.L.Lock()
 	for len(c.packetSender.packetHistory) != 0 {
 		c.allSent.Wait()
@@ -332,11 +333,18 @@ func (c *connection) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
+func (c *connection) SetACKNoDelay(nodelay bool) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.ackNoDelay = nodelay
+}
+
+// TODO opt timer
 func (c *connection) resetTimer() {
 	nextDeadline := c.lastNetworkActivityTime.Add(InitialIdleConnectionStateLifetime)
 
-	if !c.delayedAckOriginTime.IsZero() {
-		nextDeadline = utils.MinTime(nextDeadline, c.delayedAckOriginTime.Add(protocol.AckSendDelay))
+	if !c.originAckTime.IsZero() {
+		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(protocol.AckSendDelay))
 	}
 	if rtoTime := c.packetSender.TimeOfFirstRTO(); !rtoTime.IsZero() {
 		nextDeadline = utils.MinTime(nextDeadline, rtoTime)
@@ -379,7 +387,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	// TODO reference count buffer
-	p := &Packet{
+	p := &ugoPacket{
 		rawData: make([]byte, len(data)),
 	}
 
@@ -415,7 +423,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	if p.sack != nil {
-		if err := c.handleAckFrame(p.sack, p.packetNumber); err != nil {
+		if err := c.handleSack(p.sack, p.packetNumber); err != nil {
 			return err
 		}
 	}
@@ -452,11 +460,11 @@ func (c *connection) handleSegment(s *segment) error {
 	return nil
 }
 
-func (c *connection) handleAckFrame(frame *sack, packetNum uint32) error {
+func (c *connection) handleSack(ack *sack, packetNum uint32) error {
 	c.allSent.L.Lock()
 	defer c.allSent.L.Unlock()
 
-	if err := c.packetSender.ReceivedAck(frame, packetNum); err != nil {
+	if err := c.packetSender.ReceivedAck(ack, packetNum); err != nil {
 		return err
 	}
 	if len(c.packetSender.packetHistory) == 0 {
@@ -493,6 +501,7 @@ func (c *connection) sendPacket() error {
 	if atomic.LoadInt32(&c.closed) != 0 {
 		return nil
 	}
+
 	// TODO split send and recv in 2 goroutine
 	for {
 		err := c.packetSender.CheckForError()
@@ -524,14 +533,20 @@ func (c *connection) sendPacket() error {
 
 		stopWait := c.packetSender.GetStopWaitingFrame()
 
-		// Check whether we are allowed to send a packet containing only an ACK
-		//maySendOnlyAck := time.Now().Sub(s.delayedAckOriginTime) > protocol.AckSendDelay
-
 		// get data
 		frames := c.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
 
 		if ack == nil && len(frames) == 0 && stopWait == 0 {
 			return nil
+		}
+
+		// Check whether we are allowed to send a packet containing only an ACK
+		onlyAck := time.Now().Sub(c.originAckTime) > protocol.AckSendDelay || c.ackNoDelay
+
+		if len(frames) == 0 && stopWait == 0 {
+			if !onlyAck {
+				return nil
+			}
 		}
 
 		// Pop the ACK frame now that we are sure we're gonna send it
@@ -542,17 +557,11 @@ func (c *connection) sendPacket() error {
 			}
 		}
 
-		//		if len(frames) == 0 { // send ack only
-		//			if !maySendOnlyAck {
-		//				return nil
-		//			}
-		//		}
-
 		if len(frames) != 0 || stopWait != 0 { // ack only
 			c.lastPacketNumber++
 		}
 
-		pkt := &Packet{
+		pkt := &ugoPacket{
 			packetNumber: c.lastPacketNumber,
 			sack:         ack,
 			segments:     frames,
@@ -582,7 +591,7 @@ func (c *connection) sendPacket() error {
 			c.allSent.L.Unlock()
 		}
 
-		c.delayedAckOriginTime = time.Time{}
+		c.originAckTime = time.Time{}
 
 		if pkt.flag&0x01 != 0 {
 			log.Println("send invalid data:", pkt.rawData)
@@ -644,7 +653,7 @@ func (c *connection) sendPacket() error {
 
 func (c *connection) sendConnectionClose(err error) {
 	//c.lastPacketNumber++
-	pkt := &Packet{
+	pkt := &ugoPacket{
 		flag:         0x10,
 		packetNumber: 0,
 	}
@@ -693,17 +702,4 @@ func (c *connection) getDataForWriting(maxBytes uint32) []byte {
 	c.wmu.Unlock()
 
 	return ret
-}
-
-func (c *connection) shouldSendFin() bool {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	return atomic.LoadInt32(&c.closed) != 0 && !c.finSent && c.err == nil && c.dataForWriting == nil
-}
-
-func (c *connection) sentFin() {
-	c.mutex.Lock()
-	c.finSent = true
-	c.mutex.Unlock()
 }

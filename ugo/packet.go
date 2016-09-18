@@ -113,12 +113,12 @@ func (s *segment) DataLen() uint32 {
 
 // flag ack+stop+data+fin+rst+wnd
 
-type Packet struct {
+type ugoPacket struct {
 	rawData       []byte
 	flag          byte
 	Length        uint32
 	retransmitted bool
-	SendTime      time.Time
+	sendTime      time.Time
 	missingCount  uint8
 	packetNumber  uint32 // TODO Varint
 	stopWaiting   uint32
@@ -126,7 +126,7 @@ type Packet struct {
 	segments      []*segment
 }
 
-func (p *Packet) decode() error {
+func (p *ugoPacket) decode() error {
 	r := bytes.NewReader(p.rawData)
 	if flagByte, err := r.ReadByte(); err == nil {
 		p.flag = flagByte
@@ -163,7 +163,7 @@ func (p *Packet) decode() error {
 	return nil
 }
 
-func (p *Packet) encode() error {
+func (p *ugoPacket) encode() error {
 	buf := new(bytes.Buffer)
 
 	if p.sack != nil {

@@ -8,10 +8,10 @@ const (
 	packetInit = 0
 )
 
-type EncryptType byte
+type encryptMethod byte
 
 const (
-	AESEncrypt = EncryptType(iota)
+	aesEncrypt = encryptMethod(iota)
 )
 
 const (
@@ -24,9 +24,9 @@ const (
 // IPv4 minimum reassembly buffer size is 576, IPv6 has it at 1500.
 // Subtract header sizes from here
 
-const MinRetransmissionTime = 200 * time.Millisecond
-const DefaultRetransmissionTime = 500 * time.Millisecond
-const MaxCongestionWindow uint32 = 200
+const minRetransmissionTime = 200 * time.Millisecond
+const defaultRetransmissionTime = 500 * time.Millisecond
+const maxCongestionWindow uint32 = 200
 
 // DefaultMaxCongestionWindow is the default for the max congestion window
 // Taken from Chrome

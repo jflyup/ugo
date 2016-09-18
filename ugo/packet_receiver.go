@@ -9,6 +9,7 @@ import (
 var (
 	// ErrDuplicatePacket occurres when a duplicate packet is received
 	ErrDuplicatePacket = errors.New("packetReceiver: Duplicate Packet")
+	errTimeLost        = errors.New("packetReceiver: packet time lost")
 	// ErrPacketSmallerThanLastStopWaiting occurs when a packet arrives with a packet number smaller than the largest LeastUnacked of a StopWaitingFrame. If this error occurs, the packet should be ignored
 	ErrPacketSmallerThanLastStopWaiting = errors.New("packetReceiver: Packet number smaller than highest StopWaiting")
 )
@@ -32,7 +33,7 @@ type packetReceiver struct {
 }
 
 // NewReceivedPacketHandler creates a new receivedPacketHandler
-func newReceivedPacketHandler() *packetReceiver {
+func newPacketReceiver() *packetReceiver {
 	return &packetReceiver{
 		receivedTimes: make(map[uint32]time.Time),
 		packetHistory: newRecvHistory(),
@@ -44,7 +45,8 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint32) error {
 		return errInvalidPacketNumber
 	}
 
-	// if the packet number is smaller than the largest LeastUnacked value of a StopWaiting we received, we cannot detect if this packet has a duplicate number
+	// if the packet number < StopWaiting,
+	// we cannot detect if this packet has a duplicate number
 	// the packet has to be ignored anyway
 	if packetNumber <= h.ignorePacketsBelow {
 		return ErrPacketSmallerThanLastStopWaiting
@@ -80,32 +82,48 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint32) error {
 	return nil
 }
 
-func (h *packetReceiver) ReceivedStopWaiting(f uint32) error {
+func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint32) error {
 	h.stateChanged = true
 	// ignore if StopWaiting is unneeded, because we already received a StopWaiting with a higher LeastUnacked
-	if h.ignorePacketsBelow >= f {
+	if h.ignorePacketsBelow >= packetNumber {
 		return nil
 	}
 
-	h.ignorePacketsBelow = f - 1
+	// h.ignorePacketsBelow = packetNumber - 1
+	// h.garbageCollectReceivedTimes()
+
+	// the LeastUnacked is the smallest packet number of any packet for
+	// which the sender is still awaiting an ack.
+	// So the largestInOrderObserved is one less than that
+	if packetNumber > h.largestInOrderObserved {
+		h.largestInOrderObserved = packetNumber - 1
+	}
+
+	// increase the largestInOrderObserved, if this is the lowest missing packet
+	for i := h.largestInOrderObserved + 1; i <= h.largestObserved; i++ {
+		_, ok := h.receivedTimes[i]
+		if ok {
+			h.largestInOrderObserved = i
+			h.ignorePacketsBelow = i
+		} else {
+			break
+		}
+	}
+
+	h.packetHistory.DeleteBelow(h.largestInOrderObserved)
 	h.garbageCollectReceivedTimes()
 
-	// the LeastUnacked is the smallest packet number of any packet for which the sender is still awaiting an ack. So the largestInOrderObserved is one less than that
-	if f > h.largestInOrderObserved {
-		h.largestInOrderObserved = f - 1
-	}
+	// h.packetHistory.DeleteBelow(packetNumber)
 
-	h.packetHistory.DeleteBelow(f)
-
-	ackRanges := h.packetHistory.GetAckRanges()
-	// TODO
-	if len(ackRanges) > 0 {
-		n := ackRanges[len(ackRanges)-1].LastPacketNumber
-		h.packetHistory.DeleteBelow(n)
-		h.largestInOrderObserved = n
-		h.ignorePacketsBelow = n
-		h.garbageCollectReceivedTimes()
-	}
+	// ackRanges := h.packetHistory.GetAckRanges()
+	// // TODO
+	// if len(ackRanges) > 0 {
+	// 	n := ackRanges[len(ackRanges)-1].LastPacketNumber
+	// 	h.packetHistory.DeleteBelow(n)
+	// 	h.largestInOrderObserved = n
+	// 	h.ignorePacketsBelow = n
+	// 	h.garbageCollectReceivedTimes()
+	// }
 
 	return nil
 }
@@ -123,16 +141,15 @@ func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
 		return h.currentAckFrame, nil
 	}
 
-	//packetReceivedTime, ok := h.receivedTimes[h.largestObserved]
-	//	if !ok {
-	//		return nil, ErrMapAccess
-	//	}
-	packetReceivedTime := time.Now()
+	packetReceivedTime, ok := h.receivedTimes[h.largestObserved]
+	if !ok {
+		return nil, errTimeLost
+	}
+	// packetReceivedTime := time.Now()
 	ackRanges := h.packetHistory.GetAckRanges()
 	h.currentAckFrame = &sack{
-		LargestAcked:   h.largestObserved,
-		LargestInOrder: ackRanges[len(ackRanges)-1].FirstPacketNumber,
-		//LargestInOrder:     h.largestInOrderObserved,
+		LargestAcked:       h.largestObserved,
+		LargestInOrder:     ackRanges[len(ackRanges)-1].FirstPacketNumber,
 		PacketReceivedTime: packetReceivedTime,
 	}
 

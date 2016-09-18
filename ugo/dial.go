@@ -22,7 +22,7 @@ var (
 // TODO
 // DialTimeout
 
-// Connects to a remote host
+// Dial connects to a remote host
 // The network net must be a packet-oriented netowrk:
 // "udp", "udp4", "udp6", "unixgram".
 func Dial(network, address string) (net.Conn, error) {
@@ -58,11 +58,11 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 	crand.Read(connectionID[:])
 
 	// generate INIT packet
-	initPacket := &Packet{
+	initPacket := &ugoPacket{
 		rawData: make([]byte, 22),
 	}
 	initPacket.rawData[0] = byte(packetInit)
-	initPacket.rawData[1] = byte(AESEncrypt)
+	initPacket.rawData[1] = byte(aesEncrypt)
 
 	copy(initPacket.rawData[2:18], iv[:])
 	copy(initPacket.rawData[18:22], connectionID[:])

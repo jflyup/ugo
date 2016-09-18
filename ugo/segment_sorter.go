@@ -21,7 +21,7 @@ var (
 	errEmptyStreamData                 = errors.New("Stream Data empty")
 )
 
-func newStreamFrameSorter() *segmentSorter {
+func newSegmentSorter() *segmentSorter {
 	s := segmentSorter{
 		gaps:         utils.NewByteIntervalList(),
 		queuedFrames: make(map[uint32]*segment),
@@ -30,14 +30,14 @@ func newStreamFrameSorter() *segmentSorter {
 	return &s
 }
 
-func (s *segmentSorter) Push(frame *segment) error {
-	_, ok := s.queuedFrames[frame.Offset]
+func (s *segmentSorter) Push(seg *segment) error {
+	_, ok := s.queuedFrames[seg.Offset]
 	if ok {
 		return errDuplicateStreamData
 	}
 
-	start := frame.Offset
-	end := frame.Offset + frame.DataLen()
+	start := seg.Offset
+	end := seg.Offset + seg.DataLen()
 
 	if start == end {
 		return errEmptyStreamData
@@ -46,7 +46,7 @@ func (s *segmentSorter) Push(frame *segment) error {
 	var foundInGap bool
 
 	for gap := s.gaps.Front(); gap != nil; gap = gap.Next() {
-		// the complete frame lies before or after the gap
+		// the complete segment lies before or after the gap
 		if end <= gap.Value.Start || start > gap.Value.End {
 			continue
 		}
@@ -93,17 +93,17 @@ func (s *segmentSorter) Push(frame *segment) error {
 		return errTooManyGapsInReceivedStreamData
 	}
 
-	s.queuedFrames[frame.Offset] = frame
+	s.queuedFrames[seg.Offset] = seg
 	return nil
 }
 
 func (s *segmentSorter) Pop() *segment {
-	frame := s.Head()
-	if frame != nil {
-		s.readPosition += frame.DataLen()
-		delete(s.queuedFrames, frame.Offset)
+	seg := s.Head()
+	if seg != nil {
+		s.readPosition += seg.DataLen()
+		delete(s.queuedFrames, seg.Offset)
 	}
-	return frame
+	return seg
 }
 
 func (s *segmentSorter) Head() *segment {

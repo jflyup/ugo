@@ -38,7 +38,7 @@ func (c *rc4StreamCrypto) Decrypt(dst, src []byte) {
 	cipher.XORKeyStream(dst, src)
 }
 
-type AESStreamCrypto struct {
+type aesStreamCrypto struct {
 	key []byte
 	iv  []byte
 	enc cipher.Stream
@@ -46,14 +46,14 @@ type AESStreamCrypto struct {
 }
 
 // it's not safe for concurrent use!
-func newAESStreamCrypto(key []byte, iv []byte) (c *AESStreamCrypto, err error) {
+func newAESStreamCrypto(key []byte, iv []byte) (c *aesStreamCrypto, err error) {
 	// the IV must have the same length as the block
 	aesBlock, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return nil, err
 	}
 
-	c = &AESStreamCrypto{
+	c = &aesStreamCrypto{
 		iv:  iv,
 		key: key,
 		enc: cipher.NewCFBEncrypter(aesBlock, iv),
@@ -63,10 +63,10 @@ func newAESStreamCrypto(key []byte, iv []byte) (c *AESStreamCrypto, err error) {
 	return c, nil
 }
 
-func (c *AESStreamCrypto) Encrypt(dst, src []byte) {
+func (c *aesStreamCrypto) encrypt(dst, src []byte) {
 	c.enc.XORKeyStream(dst, src)
 }
 
-func (c *AESStreamCrypto) Decrypt(dst, src []byte) {
+func (c *aesStreamCrypto) decrypt(dst, src []byte) {
 	c.dec.XORKeyStream(dst, src)
 }
