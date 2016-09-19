@@ -42,7 +42,7 @@ type packetSender struct {
 	totalAcked uint32
 }
 
-// NewSentPacketHandler creates a new sentPacketHandler
+// newPacketSender creates a new packetSender
 func newPacketSender() *packetSender {
 	rttStats := &congestion.RTTStats{}
 
@@ -65,12 +65,9 @@ func newPacketSender() *packetSender {
 func (h *packetSender) ackPacket(packetNumber uint32) *ugoPacket {
 	packet, ok := h.packetHistory[packetNumber]
 	if ok && !packet.retransmitted {
-		/*
-		* if the packet is marked as retransmitted,
-		* it means this packet is queued for retransmission,
-		* but now ack for it comes before resending
-		 */
-
+		// if the packet is marked as retransmitted and it exist in packetHistory,
+		// it means this packet is queued for retransmission,
+		// but ACK for it comes before resending
 		if h.bytesInFlight < packet.Length {
 			log.Println("BUG: bytes in flight < 0")
 			h.bytesInFlight = 0
@@ -96,7 +93,7 @@ func (h *packetSender) ackPacket(packetNumber uint32) *ugoPacket {
 func (h *packetSender) nackPacket(packetNumber uint32) (*ugoPacket, error) {
 	packet, ok := h.packetHistory[packetNumber]
 	// This means that the packet has already been retransmitted, do nothing.
-	// We're probably only receiving another NACK for this packet because the
+	// another NACK for this packet may come because the
 	// retransmission has not yet arrived at the client.
 	if !ok {
 		return nil, nil
@@ -117,7 +114,7 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 	h.retransmissionQueue = append(h.retransmissionQueue, packet)
 	packet.retransmitted = true
 
-	// the packet will be removed from history when dequeueing
+	// the retransmitted packet will be removed from history when dequeueing
 
 	// increase the LargestInOrderAcked, if this is the lowest packet that hasn't been acked yet
 	if packet.packetNumber == h.largestInOrderAcked+1 {
@@ -148,7 +145,7 @@ func (h *packetSender) SentPacket(packet *ugoPacket) error {
 	h.lastSentPacketTime = now
 	packet.sendTime = now
 	if packet.Length == 0 {
-		return errors.New("SentPacketHandler: packet cannot be empty")
+		return errors.New("packetSender: packet cannot be empty")
 	}
 
 	h.lastSentPacketNumber = packet.packetNumber
@@ -210,15 +207,12 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint32) error {
 	var ackedPackets congestion.PacketVector
 	var lostPackets congestion.PacketVector
 
-	// in general h.largestInOrderAcked should be equal with ack.LargestInOrder,
-	// it not, it means newest ACK lost or receiver didn't update ack
+	// in ideal condition, h.largestInOrderAcked should be equal with ack.LargestInOrder,
+	// it not, it means newest ACK lost or out-of-order/delayed ACK
 	for i := h.largestInOrderAcked; i < ack.LargestInOrder; i++ {
-		p, err := h.nackPacket(i)
-		if err != nil {
-			return err
-		}
+		p := h.ackPacket(i)
 		if p != nil {
-			lostPackets = append(lostPackets, congestion.PacketInfo{Number: p.packetNumber, Length: p.Length})
+			ackedPackets = append(ackedPackets, congestion.PacketInfo{Number: p.packetNumber, Length: p.Length})
 		}
 	}
 
@@ -268,19 +262,19 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint32) error {
 	return nil
 }
 
-// ProbablyHasPacketForRetransmission returns if there is a packet queued for retransmission
+// checkRetransmission returns if there is a packet queued for retransmission
 // There is one case where it gets the answer wrong:
 // if a packet has already been queued for retransmission,
 // but a belated ACK is received for this packet, this function will return true,
 // although the packet will not be returend for retransmission by DequeuePacketForRetransmission()
-func (h *packetSender) ProbablyHasPacketForRetransmission() bool {
-	h.maybeQueuePacketsRTO()
+func (h *packetSender) checkRetransmission() bool {
+	h.checkPacketTimeout()
 
 	return len(h.retransmissionQueue) > 0
 }
 
 func (h *packetSender) DequeuePacketForRetransmission() (packet *ugoPacket) {
-	if !h.ProbablyHasPacketForRetransmission() {
+	if !h.checkRetransmission() {
 		return nil
 	}
 
@@ -329,7 +323,7 @@ func (h *packetSender) CheckForError() error {
 	return nil
 }
 
-func (h *packetSender) maybeQueuePacketsRTO() {
+func (h *packetSender) checkPacketTimeout() {
 	if time.Now().Before(h.TimeOfFirstRTO()) {
 		return
 	}

@@ -100,7 +100,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 	}
 
 	c.segmentSender = newSegmentSender(c) // used for outcomming segments
-	c.SetACKNoDelay(true)
+	//c.SetACKNoDelay(true)
 	return c
 }
 
@@ -125,11 +125,7 @@ func (c *connection) run() {
 		//			return
 		case <-c.timer.C:
 			c.timerRead = true
-			// We do all the interesting stuff after the switch statement, so
-			// nothing to see here.
 		case <-c.sendingScheduled:
-			// We do all the interesting stuff after the switch statement, so
-			// nothing to see here.
 		case p := <-c.receivedPackets:
 			err = c.handlePacket(p)
 
@@ -143,7 +139,7 @@ func (c *connection) run() {
 			c.Close()
 			return
 		}
-
+		// sendPacket may take a long time if continuous Write()
 		if err := c.sendPacket(); err != nil {
 			log.Println("send error", err)
 			c.Close()
@@ -156,7 +152,7 @@ func (c *connection) run() {
 	}
 }
 
-// Implementation of the Conn interface.
+// implementation of the net.Conn interface.
 func (c *connection) Read(p []byte) (int, error) {
 	if atomic.LoadInt32(&c.eof) != 0 {
 		return 0, io.EOF
@@ -339,7 +335,7 @@ func (c *connection) SetACKNoDelay(nodelay bool) {
 	c.ackNoDelay = nodelay
 }
 
-// TODO opt timer
+// TODO timer queue
 func (c *connection) resetTimer() {
 	nextDeadline := c.lastNetworkActivityTime.Add(InitialIdleConnectionStateLifetime)
 
@@ -409,9 +405,10 @@ func (c *connection) handlePacket(data []byte) error {
 
 	if p.flag == 0x10 {
 		log.Println("recv close:", p.packetNumber)
-		// peer has already gone
-		// no TIME_WAIT CLOSE_WAIT like TCP
-		c.Close()
+		// peer already gone, close immediately
+		// no TIME_WAIT CLOSE_WAIT like TCP for now
+		close(c.closeChan)
+		c.closeCallback()
 		return nil
 	}
 
@@ -423,6 +420,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	if p.sack != nil {
+		log.Println("recv ack", p.sack)
 		if err := c.handleSack(p.sack, p.packetNumber); err != nil {
 			return err
 		}
@@ -452,6 +450,7 @@ func (c *connection) handleSegment(s *segment) error {
 	}
 	c.mutex.Unlock()
 
+	// nonblocking
 	select {
 	case c.chRead <- struct{}{}:
 	default:
@@ -474,7 +473,7 @@ func (c *connection) handleSack(ack *sack, packetNum uint32) error {
 	return nil
 }
 
-// TODO
+// TODO reset connection if any error
 func (c *connection) CloseWithError(e error) error {
 	return c.closeImpl(e, false)
 }
@@ -497,7 +496,8 @@ func (c *connection) closeImpl(e error, remoteClose bool) error {
 }
 
 func (c *connection) sendPacket() error {
-	// Repeatedly try sending until we don't have any more data, or run out of the congestion window
+	// Repeatedly try sending until no more data remained,
+	// or run out of the congestion window
 	if atomic.LoadInt32(&c.closed) != 0 {
 		return nil
 	}
@@ -517,15 +517,21 @@ func (c *connection) sendPacket() error {
 		retransmitPacket := c.packetSender.DequeuePacketForRetransmission()
 
 		if retransmitPacket != nil {
-			// TODO update control message
+			// if retransmitted packet contains control message
+			if retransmitPacket.flag&0x80 == 0x80 {
+				c.packetReceiver.stateChanged = true
+			}
+			if retransmitPacket.flag&0x40 == 0x40 {
+				c.packetSender.stopWaitingManager.state = true
+			}
 
-			// don't resend packet which only contains ack info
 			for _, streamFrame := range retransmitPacket.segments {
 				log.Println("retransmit segment", streamFrame.Offset)
 				c.segmentSender.AddSegmentForRetransmission(streamFrame)
 			}
 		}
 
+		// TODO function pack()
 		ack, err := c.packetReceiver.GetAckFrame(false)
 		if err != nil {
 			return err
@@ -557,7 +563,7 @@ func (c *connection) sendPacket() error {
 			}
 		}
 
-		if len(frames) != 0 || stopWait != 0 { // ack only
+		if len(frames) != 0 || stopWait != 0 {
 			c.lastPacketNumber++
 		}
 
@@ -598,6 +604,7 @@ func (c *connection) sendPacket() error {
 		}
 
 		c.crypt.Encrypt(pkt.rawData, pkt.rawData)
+
 		_, err = c.conn.WriteTo(pkt.rawData, c.addr)
 		if err != nil {
 			return err
