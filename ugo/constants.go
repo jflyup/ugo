@@ -30,10 +30,10 @@ const maxCongestionWindow uint32 = 200
 
 // DefaultMaxCongestionWindow is the default for the max congestion window
 // Taken from Chrome
-const DefaultMaxCongestionWindow uint32 = 107
+const DefaultMaxCongestionWindow uint64 = 107
 
 // InitialCongestionWindow is the initial congestion window in QUIC packets
-const InitialCongestionWindow uint32 = 32
+const InitialCongestionWindow uint64 = 32
 
 // InitialIdleConnectionStateLifetime is the initial idle connection state lifetime
 const InitialIdleConnectionStateLifetime = 30 * time.Second

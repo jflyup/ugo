@@ -2,7 +2,7 @@ package congestion
 
 // PacketInfo combines packet number and length of a packet for congestion calculation
 type PacketInfo struct {
-	Number uint32
+	Number uint64
 	Length uint32
 }
 

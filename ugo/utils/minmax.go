@@ -105,7 +105,7 @@ func MinTime(a, b time.Time) time.Time {
 }
 
 // MaxPacketNumber returns the max packet number
-func MaxPacketNumber(a, b uint32) uint32 {
+func MaxPacketNumber(a, b uint64) uint64 {
 	if a > b {
 		return a
 	}
@@ -113,7 +113,7 @@ func MaxPacketNumber(a, b uint32) uint32 {
 }
 
 // MinPacketNumber returns the min packet number
-func MinPacketNumber(a, b uint32) uint32 {
+func MinPacketNumber(a, b uint64) uint64 {
 	if a < b {
 		return a
 	}

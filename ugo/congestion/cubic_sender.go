@@ -8,7 +8,7 @@ import (
 
 const (
 	maxBurstBytes                          = 3 * 1460
-	defaultMinimumCongestionWindow uint32  = 2
+	defaultMinimumCongestionWindow uint64  = 2
 	renoBeta                       float32 = 0.7 // Reno backoff factor.
 )
 
@@ -22,19 +22,19 @@ type cubicSender struct {
 	reno bool
 
 	// Track the largest packet that has been sent.
-	largestSentPacketNumber uint32
+	largestSentPacketNumber uint64
 
 	// Track the largest packet that has been acked.
-	largestAckedPacketNumber uint32
+	largestAckedPacketNumber uint64
 
 	// Track the largest packet number outstanding when a CWND cutback occurs.
-	largestSentAtLastCutback uint32
+	largestSentAtLastCutback uint64
 
 	// Congestion window in packets.
-	congestionWindow uint32
+	congestionWindow uint64
 
 	// Slow start congestion window in packets, aka ssthresh.
-	slowstartThreshold uint32
+	slowstartThreshold uint64
 
 	// Whether the last loss event caused us to exit slowstart.
 	// Used for stats collection of slowstartPacketsLost
@@ -44,10 +44,10 @@ type cubicSender struct {
 	slowStartLargeReduction bool
 
 	// Minimum congestion window in packets.
-	minCongestionWindow uint32
+	minCongestionWindow uint64
 
 	// Maximum number of outstanding packets for tcp.
-	maxTCPCongestionWindow uint32
+	maxTCPCongestionWindow uint64
 
 	// Number of connections to simulate.
 	numConnections int
@@ -55,12 +55,12 @@ type cubicSender struct {
 	// ACK counter for the Reno implementation.
 	congestionWindowCount uint32
 
-	initialCongestionWindow    uint32
-	initialMaxCongestionWindow uint32
+	initialCongestionWindow    uint64
+	initialMaxCongestionWindow uint64
 }
 
 // NewCubicSender makes a new cubic sender
-func NewCubicSender(clock Clock, rttStats *RTTStats, reno bool, initialCongestionWindow, initialMaxCongestionWindow uint32) SendAlgorithmWithDebugInfo {
+func NewCubicSender(clock Clock, rttStats *RTTStats, reno bool, initialCongestionWindow, initialMaxCongestionWindow uint64) SendAlgorithmWithDebugInfo {
 	return &cubicSender{
 		rttStats:                   rttStats,
 		initialCongestionWindow:    initialCongestionWindow,
@@ -86,7 +86,7 @@ func (c *cubicSender) TimeUntilSend(now time.Time, bytesInFlight uint32) time.Du
 	return utils.InfDuration
 }
 
-func (c *cubicSender) OnPacketSent(sentTime time.Time, bytesInFlight uint32, packetNumber uint32, bytes uint32, isRetransmittable bool) bool {
+func (c *cubicSender) OnPacketSent(sentTime time.Time, bytesInFlight uint32, packetNumber uint64, bytes uint32, isRetransmittable bool) bool {
 	// Only update bytesInFlight for data packets.
 	if !isRetransmittable {
 		return false
@@ -120,7 +120,7 @@ func (c *cubicSender) ExitSlowstart() {
 	c.slowstartThreshold = c.congestionWindow
 }
 
-func (c *cubicSender) SlowstartThreshold() uint32 {
+func (c *cubicSender) SlowstartThreshold() uint64 {
 	return c.slowstartThreshold
 }
 
@@ -141,7 +141,7 @@ func (c *cubicSender) OnCongestionEvent(rttUpdated bool, bytesInFlight uint32, a
 	}
 }
 
-func (c *cubicSender) onPacketAcked(ackedPacketNumber uint32, ackedBytes uint32, bytesInFlight uint32) {
+func (c *cubicSender) onPacketAcked(ackedPacketNumber uint64, ackedBytes uint32, bytesInFlight uint32) {
 	c.largestAckedPacketNumber = utils.MaxPacketNumber(ackedPacketNumber, c.largestAckedPacketNumber)
 	if c.InRecovery() {
 		// PRR is used when in recovery.
@@ -154,7 +154,7 @@ func (c *cubicSender) onPacketAcked(ackedPacketNumber uint32, ackedBytes uint32,
 	}
 }
 
-func (c *cubicSender) onPacketLost(packetNumber uint32, lostBytes uint32, bytesInFlight uint32) {
+func (c *cubicSender) onPacketLost(packetNumber uint64, lostBytes uint32, bytesInFlight uint32) {
 	// TCP NewReno (RFC6582) says that once a loss occurs, any losses in packets
 	// already sent should be treated as a single loss event, since it's expected.
 	if packetNumber <= c.largestSentAtLastCutback {
@@ -182,7 +182,7 @@ func (c *cubicSender) onPacketLost(packetNumber uint32, lostBytes uint32, bytesI
 	if c.slowStartLargeReduction && c.InSlowStart() {
 		c.congestionWindow = c.congestionWindow - 1
 	} else if c.reno {
-		c.congestionWindow = uint32(float32(c.congestionWindow) * c.RenoBeta())
+		c.congestionWindow = uint64(float32(c.congestionWindow) * c.RenoBeta())
 	} else {
 		c.congestionWindow = c.cubic.CongestionWindowAfterPacketLoss(c.congestionWindow)
 	}
@@ -207,7 +207,7 @@ func (c *cubicSender) RenoBeta() float32 {
 
 // Called when we receive an ack. Normal TCP tracks how many packets one ack
 // represents, but quic has a separate ack for each packet.
-func (c *cubicSender) maybeIncreaseCwnd(ackedPacketNumber uint32, ackedBytes uint32, bytesInFlight uint32) {
+func (c *cubicSender) maybeIncreaseCwnd(ackedPacketNumber uint64, ackedBytes uint32, bytesInFlight uint32) {
 	// Do not increase the congestion window unless the sender is close to using
 	// the current window.
 	if !c.isCwndLimited(bytesInFlight) {
@@ -227,7 +227,7 @@ func (c *cubicSender) maybeIncreaseCwnd(ackedPacketNumber uint32, ackedBytes uin
 		c.congestionWindowCount++
 		// Divide by num_connections to smoothly increase the CWND at a faster
 		// rate than conventional Reno.
-		if uint32(c.congestionWindowCount*uint32(c.numConnections)) >= c.congestionWindow {
+		if uint64(c.congestionWindowCount*uint32(c.numConnections)) >= c.congestionWindow {
 			c.congestionWindow++
 			c.congestionWindowCount = 0
 		}

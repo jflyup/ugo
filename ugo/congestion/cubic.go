@@ -19,7 +19,7 @@ import (
 // round trip time.
 const cubeScale = 40
 const cubeCongestionWindowScale = 410
-const cubeFactor uint32 = 1 << cubeScale / cubeCongestionWindowScale
+const cubeFactor uint64 = 1 << cubeScale / cubeCongestionWindowScale
 
 const defaultNumConnections = 2
 
@@ -49,21 +49,21 @@ type Cubic struct {
 	// Time when we updated last_congestion_window.
 	lastUpdateTime time.Time
 	// Last congestion window (in packets) used.
-	lastCongestionWindow uint32
+	lastCongestionWindow uint64
 	// Max congestion window (in packets) used just before last loss event.
 	// Note: to improve fairness to other streams an additional back off is
 	// applied to this value if the new value is below our latest value.
-	lastMaxCongestionWindow uint32
+	lastMaxCongestionWindow uint64
 	// Number of acked packets since the cycle started (epoch).
 	ackedPacketsCount uint32
 	// TCP Reno equivalent congestion window in packets.
-	estimatedTCPcongestionWindow uint32
+	estimatedTCPcongestionWindow uint64
 	// Origin point of cubic function.
-	originPointCongestionWindow uint32
+	originPointCongestionWindow uint64
 	// Time to origin point of cubic function in 2^10 fractions of a second.
 	timeToOriginPoint uint32
 	// Last congestion window in packets computed by cubic function.
-	lastTargetCongestionWindow uint32
+	lastTargetCongestionWindow uint64
 }
 
 // NewCubic returns a new Cubic instance
@@ -126,23 +126,23 @@ func (c *Cubic) OnApplicationLimited() {
 // CongestionWindowAfterPacketLoss computes a new congestion window to use after
 // a loss event. Returns the new congestion window in packets. The new
 // congestion window is a multiplicative decrease of our current window.
-func (c *Cubic) CongestionWindowAfterPacketLoss(currentCongestionWindow uint32) uint32 {
+func (c *Cubic) CongestionWindowAfterPacketLoss(currentCongestionWindow uint64) uint64 {
 	if currentCongestionWindow < c.lastMaxCongestionWindow {
 		// We never reached the old max, so assume we are competing with another
 		// flow. Use our extra back off factor to allow the other flow to go up.
-		c.lastMaxCongestionWindow = uint32(betaLastMax * float32(currentCongestionWindow))
+		c.lastMaxCongestionWindow = uint64(betaLastMax * float32(currentCongestionWindow))
 	} else {
 		c.lastMaxCongestionWindow = currentCongestionWindow
 	}
 	c.epoch = time.Time{} // Reset time.
-	return uint32(float32(currentCongestionWindow) * c.beta())
+	return uint64(float32(currentCongestionWindow) * c.beta())
 }
 
 // CongestionWindowAfterAck computes a new congestion window to use after a received ACK.
 // Returns the new congestion window in packets. The new congestion window
 // follows a cubic function that depends on the time passed since last
 // packet loss.
-func (c *Cubic) CongestionWindowAfterAck(currentCongestionWindow uint32, delayMin time.Duration) uint32 {
+func (c *Cubic) CongestionWindowAfterAck(currentCongestionWindow uint64, delayMin time.Duration) uint64 {
 	c.ackedPacketsCount++ // Packets acked.
 	currentTime := c.clock.Now()
 
@@ -183,7 +183,7 @@ func (c *Cubic) CongestionWindowAfterAck(currentCongestionWindow uint32, delayMi
 	elapsedTime := int64((currentTime.Add(delayMin).Sub(c.epoch)/time.Microsecond)<<10) / 1000000
 
 	offset := int64(c.timeToOriginPoint) - elapsedTime
-	deltaCongestionWindow := uint32((cubeCongestionWindowScale * offset * offset * offset) >> cubeScale)
+	deltaCongestionWindow := uint64((cubeCongestionWindowScale * offset * offset * offset) >> cubeScale)
 	targetCongestionWindow := c.originPointCongestionWindow - deltaCongestionWindow
 
 	// With dynamic beta/alpha based on number of active streams, it is possible

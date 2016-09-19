@@ -7,7 +7,7 @@ import (
 // A SendAlgorithm performs congestion control and calculates the congestion window
 type SendAlgorithm interface {
 	TimeUntilSend(now time.Time, bytesInFlight uint32) time.Duration
-	OnPacketSent(sentTime time.Time, bytesInFlight uint32, packetNumber uint32, bytes uint32, isRetransmittable bool) bool
+	OnPacketSent(sentTime time.Time, bytesInFlight uint32, packetNumber uint64, bytes uint32, isRetransmittable bool) bool
 	GetCongestionWindow() uint32
 	OnCongestionEvent(rttUpdated bool, bytesInFlight uint32, ackedPackets PacketVector, lostPackets PacketVector)
 	SetNumEmulatedConnections(n int)
@@ -27,7 +27,7 @@ type SendAlgorithmWithDebugInfo interface {
 	// Stuff only used in testing
 
 	HybridSlowStart() *HybridSlowStart
-	SlowstartThreshold() uint32
+	SlowstartThreshold() uint64
 	RenoBeta() float32
 	InRecovery() bool
 }

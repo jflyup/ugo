@@ -21,8 +21,8 @@ const hybridStartDelayMaxThresholdUs = int64(16000)
 
 // HybridSlowStart implements the TCP hybrid slow start algorithm
 type HybridSlowStart struct {
-	endPacketNumber      uint32
-	lastSentPacketNumber uint32
+	endPacketNumber      uint64
+	lastSentPacketNumber uint64
 	started              bool
 	currentMinRTT        time.Duration
 	rttSampleCount       uint32
@@ -30,7 +30,7 @@ type HybridSlowStart struct {
 }
 
 // StartReceiveRound is called for the start of each receive round (burst) in the slow start phase.
-func (s *HybridSlowStart) StartReceiveRound(lastSent uint32) {
+func (s *HybridSlowStart) StartReceiveRound(lastSent uint64) {
 	s.endPacketNumber = lastSent
 	s.currentMinRTT = 0
 	s.rttSampleCount = 0
@@ -38,7 +38,7 @@ func (s *HybridSlowStart) StartReceiveRound(lastSent uint32) {
 }
 
 // IsEndOfRound returns true if this ack is the last packet number of our current slow start round.
-func (s *HybridSlowStart) IsEndOfRound(ack uint32) bool {
+func (s *HybridSlowStart) IsEndOfRound(ack uint64) bool {
 	return s.endPacketNumber < ack
 }
 
@@ -85,14 +85,14 @@ func (s *HybridSlowStart) ShouldExitSlowStart(latestRTT time.Duration, minRTT ti
 }
 
 // OnPacketSent is called when a packet was sent
-func (s *HybridSlowStart) OnPacketSent(packetNumber uint32) {
+func (s *HybridSlowStart) OnPacketSent(packetNumber uint64) {
 	s.lastSentPacketNumber = packetNumber
 }
 
 // OnPacketAcked gets invoked after ShouldExitSlowStart, so it's best to end
 // the round when the final packet of the burst is received and start it on
 // the next incoming ack.
-func (s *HybridSlowStart) OnPacketAcked(ackedPacketNumber uint32) {
+func (s *HybridSlowStart) OnPacketAcked(ackedPacketNumber uint64) {
 	if s.IsEndOfRound(ackedPacketNumber) {
 		s.started = false
 	}

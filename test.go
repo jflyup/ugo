@@ -26,7 +26,7 @@ func handleClient(c net.Conn) {
 			break
 		}
 	}
-	c.Close()
+	//c.Close()
 	fmt.Printf("recv %d bytes in total\n", sum)
 }
 

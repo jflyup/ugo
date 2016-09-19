@@ -20,7 +20,7 @@ func newRecvHistory() *recvHistory {
 }
 
 // ReceivedPacket registers a packet with PacketNumber p and updates the ranges
-func (h *recvHistory) ReceivedPacket(p uint32) {
+func (h *recvHistory) ReceivedPacket(p uint64) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
@@ -66,7 +66,7 @@ func (h *recvHistory) ReceivedPacket(p uint32) {
 	h.ranges.InsertBefore(utils.PacketInterval{Start: p, End: p}, h.ranges.Front())
 }
 
-func (h *recvHistory) DeleteBelow(leastUnacked uint32) {
+func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 

@@ -70,7 +70,7 @@ type connection struct {
 	readOffset     uint32
 	closeCallback  func()
 
-	lastPacketNumber uint32
+	lastPacketNumber uint64
 }
 
 func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt streamCrypto, fec *FEC, close func()) *connection {
@@ -459,7 +459,7 @@ func (c *connection) handleSegment(s *segment) error {
 	return nil
 }
 
-func (c *connection) handleSack(ack *sack, packetNum uint32) error {
+func (c *connection) handleSack(ack *sack, packetNum uint64) error {
 	c.allSent.L.Lock()
 	defer c.allSent.L.Unlock()
 

@@ -20,27 +20,27 @@ var (
 )
 
 type packetReceiver struct {
-	largestInOrderObserved uint32
-	largestObserved        uint32
-	ignorePacketsBelow     uint32
+	largestInOrderObserved uint64
+	largestObserved        uint64
+	ignorePacketsBelow     uint64
 	currentAckFrame        *sack
 	stateChanged           bool // has an ACK for this state already been sent? Will be set to false every time a new packet arrives, and to false every time an ACK is sent
 
 	packetHistory *recvHistory
 
-	receivedTimes         map[uint32]time.Time
-	lowestInReceivedTimes uint32
+	receivedTimes         map[uint64]time.Time
+	lowestInReceivedTimes uint64
 }
 
 // NewReceivedPacketHandler creates a new receivedPacketHandler
 func newPacketReceiver() *packetReceiver {
 	return &packetReceiver{
-		receivedTimes: make(map[uint32]time.Time),
+		receivedTimes: make(map[uint64]time.Time),
 		packetHistory: newRecvHistory(),
 	}
 }
 
-func (h *packetReceiver) ReceivedPacket(packetNumber uint32) error {
+func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 	if packetNumber == 0 {
 		return errInvalidPacketNumber
 	}
@@ -82,7 +82,7 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint32) error {
 	return nil
 }
 
-func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint32) error {
+func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint64) error {
 	h.stateChanged = true
 	// ignore if StopWaiting is unneeded, because we already received a StopWaiting with a higher LeastUnacked
 	if h.ignorePacketsBelow >= packetNumber {
@@ -149,7 +149,7 @@ func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
 	ackRanges := h.packetHistory.GetAckRanges()
 	h.currentAckFrame = &sack{
 		LargestAcked:       h.largestObserved,
-		LargestInOrder:     ackRanges[len(ackRanges)-1].FirstPacketNumber,
+		LargestInOrder:     uint64(ackRanges[len(ackRanges)-1].FirstPacketNumber),
 		PacketReceivedTime: packetReceivedTime,
 	}
 

@@ -20,14 +20,14 @@ var (
 )
 
 type packetSender struct {
-	lastSentPacketNumber uint32
+	lastSentPacketNumber uint64
 	lastSentPacketTime   time.Time
-	largestInOrderAcked  uint32
-	largestAcked         uint32
+	largestInOrderAcked  uint64
+	largestAcked         uint64
 
-	largestReceivedPacketWithAck uint32
+	largestReceivedPacketWithAck uint64
 
-	packetHistory      map[uint32]*ugoPacket
+	packetHistory      map[uint64]*ugoPacket
 	stopWaitingManager stopWaitingManager
 
 	retransmissionQueue []*ugoPacket
@@ -55,14 +55,14 @@ func newPacketSender() *packetSender {
 	)
 
 	return &packetSender{
-		packetHistory:      make(map[uint32]*ugoPacket),
+		packetHistory:      make(map[uint64]*ugoPacket),
 		stopWaitingManager: stopWaitingManager{},
 		rttStats:           rttStats,
 		congestion:         congestion,
 	}
 }
 
-func (h *packetSender) ackPacket(packetNumber uint32) *ugoPacket {
+func (h *packetSender) ackPacket(packetNumber uint64) *ugoPacket {
 	packet, ok := h.packetHistory[packetNumber]
 	if ok && !packet.retransmitted {
 		// if the packet is marked as retransmitted and it exist in packetHistory,
@@ -90,7 +90,7 @@ func (h *packetSender) ackPacket(packetNumber uint32) *ugoPacket {
 	return packet
 }
 
-func (h *packetSender) nackPacket(packetNumber uint32) (*ugoPacket, error) {
+func (h *packetSender) nackPacket(packetNumber uint64) (*ugoPacket, error) {
 	packet, ok := h.packetHistory[packetNumber]
 	// This means that the packet has already been retransmitted, do nothing.
 	// another NACK for this packet may come because the
@@ -120,7 +120,7 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 	if packet.packetNumber == h.largestInOrderAcked+1 {
 		h.largestInOrderAcked++
 		for i := h.largestInOrderAcked + 1; i <= h.largestAcked; i++ {
-			_, ok := h.packetHistory[uint32(i)]
+			_, ok := h.packetHistory[uint64(i)]
 			if !ok {
 				h.largestInOrderAcked = i
 			} else {
@@ -165,7 +165,7 @@ func (h *packetSender) SentPacket(packet *ugoPacket) error {
 	return nil
 }
 
-func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint32) error {
+func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 	if ack.LargestAcked > h.lastSentPacketNumber {
 		return errAckForUnsentPacket
 	}
@@ -302,11 +302,11 @@ func (h *packetSender) BytesInFlight() uint32 {
 	return h.bytesInFlight
 }
 
-func (h *packetSender) GetLargestAcked() uint32 {
+func (h *packetSender) GetLargestAcked() uint64 {
 	return h.largestAcked
 }
 
-func (h *packetSender) GetStopWaitingFrame() uint32 {
+func (h *packetSender) GetStopWaitingFrame() uint64 {
 	return h.stopWaitingManager.GetStopWaitingFrame(false)
 }
 
