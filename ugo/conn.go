@@ -100,7 +100,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 	}
 
 	c.segmentSender = newSegmentSender(c) // used for outcomming segments
-
+	c.SetACKNoDelay(true)
 	return c
 }
 
@@ -598,12 +598,10 @@ func (c *connection) sendPacket() error {
 		}
 
 		c.crypt.Encrypt(pkt.rawData, pkt.rawData)
-
 		_, err = c.conn.WriteTo(pkt.rawData, c.addr)
 		if err != nil {
 			return err
 		}
-
 	}
 }
 

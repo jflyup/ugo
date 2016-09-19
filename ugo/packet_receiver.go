@@ -89,7 +89,7 @@ func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint32) error {
 		return nil
 	}
 
-	// h.ignorePacketsBelow = packetNumber - 1
+	h.ignorePacketsBelow = packetNumber - 1
 	// h.garbageCollectReceivedTimes()
 
 	// the LeastUnacked is the smallest packet number of any packet for
@@ -104,7 +104,7 @@ func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint32) error {
 		_, ok := h.receivedTimes[i]
 		if ok {
 			h.largestInOrderObserved = i
-			h.ignorePacketsBelow = i
+			h.ignorePacketsBelow = i - 1
 		} else {
 			break
 		}

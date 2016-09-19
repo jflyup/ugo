@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
+	"time"
 	//	"io/ioutil"
 	"log"
 	"net"
 	"os"
-	"time"
 
 	"github.com/jflyup/ugo/ugo"
 )
@@ -14,7 +14,7 @@ import (
 func handleClient(c net.Conn) {
 	buf := make([]byte, 2000)
 
-	c.SetDeadline(time.Now().Add(10 * time.Second))
+	//c.SetDeadline(time.Now().Add(10 * time.Second))
 	var sum int
 	for {
 		if n, err := c.Read(buf); err == nil {
@@ -26,16 +26,18 @@ func handleClient(c net.Conn) {
 			break
 		}
 	}
+	c.Close()
 	fmt.Printf("recv %d bytes in total\n", sum)
 }
 
 func client() {
+	start := time.Now()
 	client, err := ugo.Dial("udp", "127.0.0.1:9000")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	client.SetDeadline(time.Now().Add(10 * time.Second))
+	//client.SetDeadline(time.Now().Add(10 * time.Second))
 	buf := make([]byte, 1000)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = 95
@@ -44,7 +46,7 @@ func client() {
 	var sum int
 	for i := 0; i < 10000; i++ {
 		if _, err := client.Write(buf); err != nil {
-			fmt.Println("error writing, exit", err)
+			fmt.Println("error writing, exiting", err)
 			break
 		}
 
@@ -53,7 +55,9 @@ func client() {
 		}
 	}
 
-	fmt.Printf("client recv response, %d bytes", sum)
+	client.Close()
+	end := time.Now()
+	fmt.Printf("client recv response, %d bytes in %f seconds\n", sum, end.Sub(start).Seconds())
 }
 
 func main() {
@@ -61,7 +65,7 @@ func main() {
 
 	f, err := os.OpenFile("proxy.log", os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
-		log.Println("error opening file: %v", err)
+		log.Printf("error opening file: %v", err)
 	}
 	defer f.Close()
 	log.SetOutput(f)
