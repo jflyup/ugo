@@ -97,7 +97,7 @@ func (h *recvHistory) GetAckRanges() []sackRange {
 	var ackRanges []sackRange
 
 	for el := h.ranges.Back(); el != nil; el = el.Prev() {
-		ackRanges = append(ackRanges, sackRange{FirstPacketNumber: el.Value.Start, LastPacketNumber: el.Value.End})
+		ackRanges = append(ackRanges, sackRange{firstPacketNumber: el.Value.Start, lastPacketNumber: el.Value.End})
 	}
 
 	return ackRanges

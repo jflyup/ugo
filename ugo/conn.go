@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,9 +64,9 @@ type connection struct {
 	readTimeout  time.Time // read deadline
 	writeTimeout time.Time // write deadline
 
-	readPosInFrame uint32
-	writeOffset    uint32
-	readOffset     uint32
+	readPosInFrame int
+	writeOffset    uint64
+	readOffset     uint64
 	closeCallback  func()
 
 	lastPacketNumber uint64
@@ -100,11 +99,11 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 	}
 
 	c.segmentSender = newSegmentSender(c) // used for outcomming segments
-	//c.SetACKNoDelay(true)
 	return c
 }
 
 func (c *connection) run() {
+	defer c.closeCallback()
 	for {
 		// Close immediately if requested
 		select {
@@ -118,11 +117,6 @@ func (c *connection) run() {
 
 		var err error
 		select {
-		//		case errForConnClose := <-s.closeChan:
-		//			//			if errForConnClose != nil {
-		//			//				s.sendConnectionClose(errForConnClose)
-		//			//			}
-		//			return
 		case <-c.timer.C:
 			c.timerRead = true
 		case <-c.sendingScheduled:
@@ -136,7 +130,7 @@ func (c *connection) run() {
 
 		if err != nil {
 			log.Println("handle error", err)
-			c.Close()
+			c.Close() // TODO reset connection
 			return
 		}
 		// sendPacket may take a long time if continuous Write()
@@ -182,7 +176,7 @@ func (c *connection) Read(p []byte) (int, error) {
 			}
 			if frame != nil {
 				// Pop and continue if the frame doesn't have any new data
-				if frame.Offset+frame.DataLen() <= c.readOffset {
+				if frame.offset+frame.DataLen() <= c.readOffset {
 					c.segmentQueue.Pop()
 					frame = c.segmentQueue.Head()
 
@@ -190,9 +184,9 @@ func (c *connection) Read(p []byte) (int, error) {
 				}
 				// If the frame's offset is <= our current read pos, and we didn't
 				// go into the previous if, we can read data from the frame.
-				if frame.Offset <= c.readOffset {
+				if frame.offset <= c.readOffset {
 					// Set our read position in the frame properly
-					c.readPosInFrame = c.readOffset - frame.Offset
+					c.readPosInFrame = int(c.readOffset - frame.offset)
 					break
 				}
 			}
@@ -212,7 +206,7 @@ func (c *connection) Read(p []byte) (int, error) {
 			case <-timeout:
 				return bytesRead, errTimeout
 			case <-c.closeChan:
-				return 0, io.ErrClosedPipe
+				return bytesRead, io.ErrClosedPipe
 			}
 		}
 		c.mutex.Unlock()
@@ -223,16 +217,16 @@ func (c *connection) Read(p []byte) (int, error) {
 			return bytesRead, c.err
 		}
 
-		m := uint32(utils.Min(len(p)-bytesRead, int(frame.DataLen())) - int(c.readPosInFrame))
+		m := utils.Min(len(p)-bytesRead, int(frame.DataLen())-c.readPosInFrame)
 		copy(p[bytesRead:], frame.data[c.readPosInFrame:])
 
 		c.readPosInFrame += m
 		bytesRead += int(m)
-		c.readOffset += m
+		c.readOffset += uint64(m)
 
 		//		s.flowControlManager.AddBytesRead(s.streamID, uint32(m))
 		//		s.onData() // so that a possible WINDOW_UPDATE is sent
-		if c.readPosInFrame >= frame.DataLen() {
+		if c.readPosInFrame >= int(frame.DataLen()) {
 			c.mutex.Lock()
 			c.segmentQueue.Pop()
 			c.mutex.Unlock()
@@ -274,10 +268,6 @@ func (c *connection) Write(p []byte) (int, error) {
 
 // TODO 2 ways(reset and graceful shutdown) to terminate a connection
 func (c *connection) Close() error {
-	_, file, no, ok := runtime.Caller(1)
-	if ok {
-		log.Printf("called from %s#%d\n", file, no)
-	}
 	// Only close once
 	if !atomic.CompareAndSwapInt32(&c.closed, 0, 1) {
 		return nil
@@ -297,7 +287,6 @@ func (c *connection) Close() error {
 	c.sendConnectionClose(nil)
 	close(c.closeChan)
 
-	c.closeCallback()
 	return nil
 }
 
@@ -397,31 +386,27 @@ func (c *connection) handlePacket(data []byte) error {
 
 	log.Printf("%s recv packet %d, length %d", c.localAddr.String(), p.packetNumber, p.Length)
 
-	if p.flag&0x01 != 0 {
+	if p.flags&0x01 != 0 {
 		log.Println("recv weird data:", p.rawData)
 		// TODO should close the connection
 		return nil
 	}
 
-	if p.flag == 0x10 {
+	if p.flags == 0x10 {
 		log.Println("recv close:", p.packetNumber)
 		// peer already gone, close immediately
 		// no TIME_WAIT CLOSE_WAIT like TCP for now
 		atomic.StoreInt32(&c.closed, 1)
-		close(c.closeChan)
-		c.closeCallback()
 		return nil
 	}
 
 	if p.packetNumber != 0 {
 		if err := c.packetReceiver.ReceivedPacket(p.packetNumber); err != nil {
-			log.Printf("recv packets error %v, recv history %v", err, c.packetReceiver.packetHistory.ranges.Len())
 			return err
 		}
 	}
 
 	if p.sack != nil {
-		log.Println("recv ack", p.sack)
 		if err := c.handleSack(p.sack, p.packetNumber); err != nil {
 			return err
 		}
@@ -519,15 +504,15 @@ func (c *connection) sendPacket() error {
 
 		if retransmitPacket != nil {
 			// if retransmitted packet contains control message
-			if retransmitPacket.flag&0x80 == 0x80 {
+			if retransmitPacket.flags&0x80 == 0x80 {
 				c.packetReceiver.stateChanged = true
 			}
-			if retransmitPacket.flag&0x40 == 0x40 {
+			if retransmitPacket.flags&0x40 == 0x40 {
 				c.packetSender.stopWaitingManager.state = true
 			}
 
 			for _, streamFrame := range retransmitPacket.segments {
-				log.Println("retransmit segment", streamFrame.Offset)
+				log.Println("retransmit segment", streamFrame.offset)
 				c.segmentSender.AddSegmentForRetransmission(streamFrame)
 			}
 		}
@@ -580,7 +565,7 @@ func (c *connection) sendPacket() error {
 			return err
 		}
 
-		if pkt.flag == 0x80 {
+		if pkt.flags == 0x80 {
 			pkt.packetNumber = 0
 		}
 
@@ -600,7 +585,7 @@ func (c *connection) sendPacket() error {
 
 		c.originAckTime = time.Time{}
 
-		if pkt.flag&0x01 != 0 {
+		if pkt.flags&0x01 != 0 {
 			log.Println("send invalid data:", pkt.rawData)
 		}
 
@@ -660,7 +645,7 @@ func (c *connection) sendPacket() error {
 func (c *connection) sendConnectionClose(err error) {
 	//c.lastPacketNumber++
 	pkt := &ugoPacket{
-		flag:         0x10,
+		flags:        0x10,
 		packetNumber: 0,
 	}
 
@@ -686,14 +671,14 @@ func (c *connection) lenOfDataForWriting() uint32 {
 	return l
 }
 
-func (c *connection) getDataForWriting(maxBytes uint32) []byte {
+func (c *connection) getDataForWriting(maxBytes uint64) []byte {
 	c.wmu.Lock()
 	if c.dataForWriting == nil {
 		c.wmu.Unlock()
 		return nil
 	}
 	var ret []byte
-	if uint32(len(c.dataForWriting)) > maxBytes {
+	if uint64(len(c.dataForWriting)) > maxBytes {
 		ret = c.dataForWriting[:maxBytes]
 		c.dataForWriting = c.dataForWriting[maxBytes:]
 	} else {
@@ -704,7 +689,7 @@ func (c *connection) getDataForWriting(maxBytes uint32) []byte {
 		default:
 		}
 	}
-	c.writeOffset += uint32(len(ret))
+	c.writeOffset += uint64(len(ret))
 	c.wmu.Unlock()
 
 	return ret

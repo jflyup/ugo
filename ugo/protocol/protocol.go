@@ -8,22 +8,6 @@ import (
 // A PacketNumber in QUIC
 type PacketNumber uint32
 
-// PacketNumberLen is the length of the packet number in bytes
-type PacketNumberLen uint8
-
-const (
-	// PacketNumberLenInvalid is the default value and not a valid length for a packet number
-	PacketNumberLenInvalid PacketNumberLen = 0
-	// PacketNumberLen1 is a packet number length of 1 byte
-	PacketNumberLen1 PacketNumberLen = 1
-	// PacketNumberLen2 is a packet number length of 2 bytes
-	PacketNumberLen2 PacketNumberLen = 2
-	// PacketNumberLen4 is a packet number length of 4 bytes
-	PacketNumberLen4 PacketNumberLen = 4
-	// PacketNumberLen6 is a packet number length of 6 bytes
-	PacketNumberLen6 PacketNumberLen = 6
-)
-
 // A ConnectionID in QUIC
 type ConnectionID uint32
 
@@ -31,7 +15,7 @@ type ConnectionID uint32
 // minus the IP and UDP headers. typical IPv4 has a 20 byte header, UDP adds an
 // additional 4 bytes.  This is a total overhead of 24 bytes.  Ethernet's
 // max packet size is 1500 bytes,  1500 - 24 = 1476.
-const MaxPacketSize uint32 = 1476
+const MaxPacketSize uint64 = 1476
 
 // MaxByteCount is the maximum value of a uint32
 const MaxByteCount = math.MaxUint32

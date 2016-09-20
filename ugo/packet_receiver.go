@@ -148,13 +148,13 @@ func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
 	// packetReceivedTime := time.Now()
 	ackRanges := h.packetHistory.GetAckRanges()
 	h.currentAckFrame = &sack{
-		LargestAcked:       h.largestObserved,
-		LargestInOrder:     uint64(ackRanges[len(ackRanges)-1].FirstPacketNumber),
-		PacketReceivedTime: packetReceivedTime,
+		largestAcked:       h.largestObserved,
+		largestInOrder:     uint64(ackRanges[len(ackRanges)-1].firstPacketNumber),
+		packetReceivedTime: packetReceivedTime,
 	}
 
 	if len(ackRanges) > 1 {
-		h.currentAckFrame.AckRanges = ackRanges
+		h.currentAckFrame.ackRanges = ackRanges
 	}
 
 	return h.currentAckFrame, nil

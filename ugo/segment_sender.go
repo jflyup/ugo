@@ -15,16 +15,16 @@ func (f *segmentSender) AddSegmentForRetransmission(frame *segment) {
 	f.retransmissionQueue = append(f.retransmissionQueue, frame)
 }
 
-func (f *segmentSender) PopSegments(maxLen uint32) []*segment {
+func (f *segmentSender) PopSegments(maxLen uint64) []*segment {
 	fs, currentLen := f.maybePopFramesForRetransmission(maxLen)
 	return append(fs, f.maybePopNormalFrames(maxLen-currentLen)...)
 }
 
-func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint32) (res []*segment, currentLen uint32) {
+func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint64) (res []*segment, currentLen uint64) {
 	for len(f.retransmissionQueue) > 0 {
 		seg := f.retransmissionQueue[0]
 
-		var frameHeaderLen uint32 = 4 // TODO
+		var frameHeaderLen uint64 = 4 // TODO
 		if currentLen+frameHeaderLen > maxLen {
 			break
 		}
@@ -45,13 +45,13 @@ func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint32) (res []*s
 	return
 }
 
-func (f *segmentSender) maybePopNormalFrames(maxBytes uint32) (res []*segment) {
+func (f *segmentSender) maybePopNormalFrames(maxBytes uint64) (res []*segment) {
 	frame := &segment{}
-	var currentLen uint32
+	var currentLen uint64
 
 	// not perfect, but thread-safe since writeOffset is only written when getting data
-	frame.Offset = f.c.writeOffset
-	var frameHeaderBytes uint32 = 4 // TODO
+	frame.offset = f.c.writeOffset
+	var frameHeaderBytes uint64 = 4 // TODO
 	if currentLen+frameHeaderBytes > maxBytes {
 		return // theoretically, we could find another stream that fits, but this is quite unlikely, so we stop here
 	}
@@ -68,13 +68,7 @@ func (f *segmentSender) maybePopNormalFrames(maxBytes uint32) (res []*segment) {
 
 	data := f.c.getDataForWriting(maxLen)
 	if data == nil {
-		//		if f.s.shouldSendFin() {
-		//			frame.FinBit = true
-		//			f.s.sentFin()
-		//			res = append(res, frame)
-		//			currentLen += frameHeaderBytes + frame.DataLen()
-		//			frame = &StreamFrame{}
-		//		}
+		// do something?
 		return
 	}
 
@@ -88,18 +82,18 @@ func (f *segmentSender) maybePopNormalFrames(maxBytes uint32) (res []*segment) {
 }
 
 // maybeSplitOffFrame removes the first n bytes and returns them as a separate frame. If n >= len(frame), nil is returned and nothing is modified.
-func maybeSplitOffFrame(frame *segment, n uint32) *segment {
+func maybeSplitOffFrame(frame *segment, n uint64) *segment {
 	if n >= frame.DataLen() {
 		return nil
 	}
 
 	defer func() {
 		frame.data = frame.data[n:]
-		frame.Offset += n
+		frame.offset += n
 	}()
 
 	return &segment{
-		Offset: frame.Offset,
+		offset: frame.offset,
 		data:   frame.data[:n],
 	}
 }

@@ -129,7 +129,7 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 		}
 	}
 
-	log.Printf("retransfer packet %d, flag: %d, length %d", packet.packetNumber, packet.flag, packet.Length)
+	log.Printf("retransfer packet %d, flag: %d, length %d", packet.packetNumber, packet.flags, packet.Length)
 
 	// send stopWaiting only when restransmisson happened
 	h.stopWaitingManager.SetBoundary(h.largestInOrderAcked)
@@ -149,7 +149,7 @@ func (h *packetSender) SentPacket(packet *ugoPacket) error {
 	}
 
 	h.lastSentPacketNumber = packet.packetNumber
-	if packet.flag != 0x80 {
+	if packet.flags != 0x80 {
 		h.totalSend += packet.Length
 		h.bytesInFlight += packet.Length
 		h.packetHistory[packet.packetNumber] = packet
@@ -166,7 +166,7 @@ func (h *packetSender) SentPacket(packet *ugoPacket) error {
 }
 
 func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
-	if ack.LargestAcked > h.lastSentPacketNumber {
+	if ack.largestAcked > h.lastSentPacketNumber {
 		return errAckForUnsentPacket
 	}
 
@@ -182,23 +182,23 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 	}
 
 	// ignore repeated or delayed ACK (ACKs that don't have a higher LargestAcked than the last ACK)
-	if ack.LargestAcked <= h.largestInOrderAcked {
+	if ack.largestAcked <= h.largestInOrderAcked {
 		return nil
 	}
 
 	// out-of-order ACK
-	if ack.LargestAcked <= h.largestAcked {
+	if ack.largestAcked <= h.largestAcked {
 		return nil
 	}
 
-	h.largestAcked = ack.LargestAcked
+	h.largestAcked = ack.largestAcked
 
 	packet, ok := h.packetHistory[h.largestAcked]
 	if ok {
 		// Update the RTT
 		timeDelta := time.Now().Sub(packet.sendTime)
 		// TODO: Don't always update RTT
-		h.rttStats.UpdateRTT(timeDelta, ack.DelayTime, time.Now())
+		h.rttStats.UpdateRTT(timeDelta, ack.delayTime, time.Now())
 
 		log.Printf("Estimated RTT: %dms", h.rttStats.SmoothedRTT()/time.Millisecond)
 
@@ -209,7 +209,7 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 
 	// in ideal condition, h.largestInOrderAcked should be equal with ack.LargestInOrder,
 	// it not, it means newest ACK lost or out-of-order/delayed ACK
-	for i := h.largestInOrderAcked; i < ack.LargestInOrder; i++ {
+	for i := h.largestInOrderAcked; i < ack.largestInOrder; i++ {
 		p := h.ackPacket(i)
 		if p != nil {
 			ackedPackets = append(ackedPackets, congestion.PacketInfo{Number: p.packetNumber, Length: p.Length})
@@ -217,16 +217,16 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 	}
 
 	ackRangeIndex := 0
-	for i := ack.LargestInOrder; i <= ack.LargestAcked; i++ {
+	for i := ack.largestInOrder; i <= ack.largestAcked; i++ {
 		if ack.HasMissingRanges() {
-			ackRange := ack.AckRanges[len(ack.AckRanges)-1-ackRangeIndex]
+			ackRange := ack.ackRanges[len(ack.ackRanges)-1-ackRangeIndex]
 
-			if i > ackRange.LastPacketNumber && ackRangeIndex < len(ack.AckRanges)-1 {
+			if i > ackRange.lastPacketNumber && ackRangeIndex < len(ack.ackRanges)-1 {
 				ackRangeIndex++
-				ackRange = ack.AckRanges[len(ack.AckRanges)-1-ackRangeIndex]
+				ackRange = ack.ackRanges[len(ack.ackRanges)-1-ackRangeIndex]
 			}
 
-			if i >= ackRange.FirstPacketNumber { // packet i contained in ACK range
+			if i >= ackRange.firstPacketNumber { // packet i contained in ACK range
 				p := h.ackPacket(i)
 				if p != nil {
 					ackedPackets = append(ackedPackets, congestion.PacketInfo{Number: p.packetNumber, Length: p.Length})
@@ -248,7 +248,7 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 		}
 	}
 
-	log.Printf("largest in order send %d, ack in order %d", h.largestInOrderAcked, ack.LargestInOrder)
+	log.Printf("largest in order send %d, ack in order %d", h.largestInOrderAcked, ack.largestInOrder)
 
 	h.congestion.OnCongestionEvent(
 		true, /* TODO: rtt updated */

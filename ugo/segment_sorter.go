@@ -9,8 +9,8 @@ import (
 )
 
 type segmentSorter struct {
-	queuedFrames map[uint32]*segment
-	readPosition uint32
+	queuedFrames map[uint64]*segment
+	readPosition uint64
 	gaps         *utils.ByteIntervalList
 }
 
@@ -24,20 +24,20 @@ var (
 func newSegmentSorter() *segmentSorter {
 	s := segmentSorter{
 		gaps:         utils.NewByteIntervalList(),
-		queuedFrames: make(map[uint32]*segment),
+		queuedFrames: make(map[uint64]*segment),
 	}
 	s.gaps.PushFront(utils.ByteInterval{Start: 0, End: protocol.MaxByteCount})
 	return &s
 }
 
 func (s *segmentSorter) Push(seg *segment) error {
-	_, ok := s.queuedFrames[seg.Offset]
+	_, ok := s.queuedFrames[seg.offset]
 	if ok {
 		return errDuplicateStreamData
 	}
 
-	start := seg.Offset
-	end := seg.Offset + seg.DataLen()
+	start := seg.offset
+	end := seg.offset + seg.DataLen()
 
 	if start == end {
 		return errEmptyStreamData
@@ -93,7 +93,7 @@ func (s *segmentSorter) Push(seg *segment) error {
 		return errTooManyGapsInReceivedStreamData
 	}
 
-	s.queuedFrames[seg.Offset] = seg
+	s.queuedFrames[seg.offset] = seg
 	return nil
 }
 
@@ -101,7 +101,7 @@ func (s *segmentSorter) Pop() *segment {
 	seg := s.Head()
 	if seg != nil {
 		s.readPosition += seg.DataLen()
-		delete(s.queuedFrames, seg.Offset)
+		delete(s.queuedFrames, seg.offset)
 	}
 	return seg
 }

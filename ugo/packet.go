@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/jflyup/ugo/ugo/utils"
-
-	"github.com/jflyup/ugo/ugo/protocol"
 )
 
 type refBuffer struct {
@@ -52,24 +50,31 @@ var (
 	errInconsistentAckLowestAcked  = errors.New("internal inconsistency: LowestAcked does not match ACK ranges")
 )
 
+const (
+	ackFlag  byte = 0x80
+	stopFlag byte = 0x40
+	pshFlag  byte = 0x20
+	finFlag  byte = 0x10
+)
+
 type sackRange struct {
-	FirstPacketNumber uint64
-	LastPacketNumber  uint64
+	firstPacketNumber uint64
+	lastPacketNumber  uint64
 }
 
 type sack struct {
-	LargestAcked   uint64
-	LargestInOrder uint64
+	largestAcked   uint64
+	largestInOrder uint64
 	// has to be ordered.
 	// The ACK range with the highest FirstPacketNumber goes first,
 	// the ACK range with the lowest FirstPacketNumber goes last
-	AckRanges          []sackRange
-	DelayTime          time.Duration
-	PacketReceivedTime time.Time
+	ackRanges          []sackRange
+	delayTime          time.Duration
+	packetReceivedTime time.Time
 }
 
 type segment struct {
-	Offset uint32
+	offset uint64
 	data   []byte
 }
 
@@ -77,7 +82,7 @@ func parseSegment(r *bytes.Reader) (*segment, error) {
 	frame := &segment{}
 
 	var err error
-	if frame.Offset, err = utils.ReadUint32(r); err != nil {
+	if frame.offset, err = binary.ReadUvarint(r); err != nil {
 		return nil, err
 	}
 	l, err := utils.ReadUint16(r)
@@ -94,29 +99,32 @@ func parseSegment(r *bytes.Reader) (*segment, error) {
 }
 
 func (s *segment) Write(b *bytes.Buffer) error {
-	utils.WriteUint32(b, s.Offset)
+	numBuf := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(numBuf, s.offset)
+	b.Write(numBuf[:n])
+
 	utils.WriteUint16(b, uint16(len(s.data)))
 	b.Write(s.data)
 
 	return nil
 }
 
-func (s *segment) DataLen() uint32 {
-	return uint32(len(s.data))
+func (s *segment) DataLen() uint64 {
+	return uint64(len(s.data))
 }
 
 /*
-0        1                                5   ...  n                       n+4               n+6 ...
+0        1            varint                                varint                 uint16
 +--------+--------------------------------+--------+------------------------+----------------+-----
-|  flag  |       packet number(opt)       |  SACK  |      offset            |  data length   | data
+|  flags  |       packet number(opt)       |  SACK  |      offset            |  data length   | data
 +--------+--------------------------------+--------+------------------------+----------------+-----
 */
 
-// flag ack+stop+data+fin+rst+wnd
+// flags ack+stop+psh+fin+rst+wnd
 
 type ugoPacket struct {
 	rawData       []byte
-	flag          byte
+	flags         byte
 	Length        uint32
 	retransmitted bool
 	sendTime      time.Time
@@ -129,18 +137,18 @@ type ugoPacket struct {
 
 func (p *ugoPacket) decode() (err error) {
 	r := bytes.NewReader(p.rawData)
-	if p.flag, err = r.ReadByte(); err != nil {
+	if p.flags, err = r.ReadByte(); err != nil {
 		return
 	}
 
-	if p.flag&0x80 == 0x80 { // ack flag
+	if p.flags&ackFlag == ackFlag { // ack flag
 		p.sack, err = parseSack(r)
 		if err != nil {
 			return
 		}
 	}
 
-	if p.flag != 0x80 {
+	if p.flags != ackFlag {
 		if p.packetNumber, err = binary.ReadUvarint(r); err != nil {
 			return err
 		}
@@ -148,7 +156,7 @@ func (p *ugoPacket) decode() (err error) {
 		p.packetNumber = 0
 	}
 
-	if p.flag&0x40 == 0x40 { // largest in order
+	if p.flags&stopFlag == stopFlag {
 		if p.stopWaiting, err = binary.ReadUvarint(r); err != nil {
 			return err
 		}
@@ -165,22 +173,28 @@ func (p *ugoPacket) decode() (err error) {
 	return nil
 }
 
+// func (b *bytes.Buffer) writeUvarint(n uint64) {
+// 	numBuf := make([]byte, binary.MaxVarintLen64)
+// 	pos := binary.PutUvarint(numBuf, n)
+// 	b.Write(numBuf[:pos])
+// }
+
 func (p *ugoPacket) encode() error {
 	buf := new(bytes.Buffer)
 
 	if p.sack != nil {
-		p.flag |= 0x80
+		p.flags |= ackFlag
 	}
 
 	if p.stopWaiting != 0 {
-		p.flag |= 0x40
+		p.flags |= stopFlag
 	}
 
 	if len(p.segments) != 0 {
-		p.flag |= 0x20
+		p.flags |= pshFlag
 	}
 
-	buf.WriteByte(p.flag)
+	buf.WriteByte(p.flags)
 
 	if p.sack != nil {
 		if err := p.sack.Write(buf); err != nil {
@@ -188,14 +202,14 @@ func (p *ugoPacket) encode() error {
 		}
 	}
 
-	if p.flag != 0x80 {
-		numBuf := make([]byte, 8)
+	if p.flags != ackFlag {
+		numBuf := make([]byte, binary.MaxVarintLen64)
 		n := binary.PutUvarint(numBuf, p.packetNumber)
 		buf.Write(numBuf[:n])
 	}
 
 	if p.stopWaiting != 0 {
-		numBuf := make([]byte, 8)
+		numBuf := make([]byte, binary.MaxVarintLen64)
 		n := binary.PutUvarint(numBuf, p.stopWaiting)
 		buf.Write(numBuf[:n])
 	}
@@ -213,7 +227,7 @@ func (p *ugoPacket) encode() error {
 	return nil
 }
 
-// parseSack reads an SACK
+// parseSack parses an SACK
 func parseSack(r *bytes.Reader) (*sack, error) {
 	s := &sack{}
 
@@ -222,32 +236,22 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 		return nil, err
 	}
 
-	hasMissingRanges := false // length of the Missing Packet Sequence Number Delta
+	hasMissingRanges := false
 	if typeByte&0x20 == 0x20 {
 		hasMissingRanges = true
 	}
 
-	largestAckedLen := 2 * ((typeByte & 0x0C) >> 2)
-	if largestAckedLen == 0 {
-		largestAckedLen = 1
-	}
-
-	missingSequenceNumberDeltaLen := 2 * (typeByte & 0x03)
-	if missingSequenceNumberDeltaLen == 0 {
-		missingSequenceNumberDeltaLen = 1
-	}
-
-	largestAcked, err := utils.ReadUintN(r, largestAckedLen)
+	largestAcked, err := binary.ReadUvarint(r)
 	if err != nil {
 		return nil, err
 	}
-	s.LargestAcked = uint64(largestAcked)
+	s.largestAcked = largestAcked
 
 	delay, err := utils.ReadUfloat16(r)
 	if err != nil {
 		return nil, err
 	}
-	s.DelayTime = time.Duration(delay) * time.Microsecond
+	s.delayTime = time.Duration(delay) * time.Microsecond
 
 	var numAckBlocks uint8
 	if hasMissingRanges {
@@ -261,7 +265,7 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 		return nil, ErrInvalidAckRanges
 	}
 
-	ackBlockLength, err := utils.ReadUintN(r, missingSequenceNumberDeltaLen)
+	ackBlockLength, err := binary.ReadUvarint(r)
 	if err != nil {
 		return nil, err
 	}
@@ -275,10 +279,10 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 
 	if hasMissingRanges {
 		ackRange := sackRange{
-			FirstPacketNumber: (largestAcked - ackBlockLength) + 1,
-			LastPacketNumber:  s.LargestAcked,
+			firstPacketNumber: (largestAcked - ackBlockLength) + 1,
+			lastPacketNumber:  s.largestAcked,
 		}
-		s.AckRanges = append(s.AckRanges, ackRange)
+		s.ackRanges = append(s.ackRanges, ackRange)
 
 		var inLongBlock bool
 		var lastRangeComplete bool
@@ -289,21 +293,21 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 				return nil, err
 			}
 
-			ackBlockLength, err = utils.ReadUintN(r, missingSequenceNumberDeltaLen)
+			ackBlockLength, err = binary.ReadUvarint(r)
 			if err != nil {
 				return nil, err
 			}
 
 			if inLongBlock {
-				s.AckRanges[len(s.AckRanges)-1].FirstPacketNumber -= uint64(gap) + ackBlockLength
-				s.AckRanges[len(s.AckRanges)-1].LastPacketNumber -= uint64(gap)
+				s.ackRanges[len(s.ackRanges)-1].firstPacketNumber -= uint64(gap) + ackBlockLength
+				s.ackRanges[len(s.ackRanges)-1].lastPacketNumber -= uint64(gap)
 			} else {
 				lastRangeComplete = false
 				ackRange := sackRange{
-					LastPacketNumber: s.AckRanges[len(s.AckRanges)-1].FirstPacketNumber - uint64(gap) - 1,
+					lastPacketNumber: s.ackRanges[len(s.ackRanges)-1].firstPacketNumber - uint64(gap) - 1,
 				}
-				ackRange.FirstPacketNumber = ackRange.LastPacketNumber - ackBlockLength + 1
-				s.AckRanges = append(s.AckRanges, ackRange)
+				ackRange.firstPacketNumber = ackRange.lastPacketNumber - ackBlockLength + 1
+				s.ackRanges = append(s.ackRanges, ackRange)
 			}
 
 			if ackBlockLength > 0 {
@@ -316,12 +320,12 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 		// if the last range was not complete, FirstPacketNumber and LastPacketNumber make no sense
 		// remove the range from frame.AckRanges
 		if !lastRangeComplete {
-			s.AckRanges = s.AckRanges[:len(s.AckRanges)-1]
+			s.ackRanges = s.ackRanges[:len(s.ackRanges)-1]
 		}
 
-		s.LargestInOrder = uint64(s.AckRanges[len(s.AckRanges)-1].FirstPacketNumber)
+		s.largestInOrder = uint64(s.ackRanges[len(s.ackRanges)-1].firstPacketNumber)
 	} else {
-		s.LargestInOrder = largestAcked + 1 - ackBlockLength
+		s.largestInOrder = largestAcked + 1 - ackBlockLength
 	}
 
 	if !s.validateAckRanges() {
@@ -333,38 +337,19 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 
 // Write writes an ACK frame.
 func (s *sack) Write(b *bytes.Buffer) error {
-	largestAckedLen := protocol.GetPacketNumberLength(protocol.PacketNumber(s.LargestAcked))
-
-	typeByte := uint8(0x40)
-
-	if largestAckedLen != protocol.PacketNumberLen1 {
-		typeByte ^= (uint8(largestAckedLen / 2)) << 2
-	}
-
-	missingSequenceNumberDeltaLen := s.getMissingSequenceNumberDeltaLen()
-	if missingSequenceNumberDeltaLen != protocol.PacketNumberLen1 {
-		typeByte ^= (uint8(missingSequenceNumberDeltaLen / 2))
-	}
+	var typeByte uint8
 
 	if s.HasMissingRanges() {
 		typeByte |= 0x20
 	}
 
 	b.WriteByte(typeByte)
+	numBuf := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(numBuf, s.largestAcked)
+	b.Write(numBuf[:n])
 
-	switch largestAckedLen {
-	case protocol.PacketNumberLen1:
-		b.WriteByte(uint8(s.LargestAcked))
-	case protocol.PacketNumberLen2:
-		utils.WriteUint16(b, uint16(s.LargestAcked))
-	case protocol.PacketNumberLen4:
-		utils.WriteUint32(b, uint32(s.LargestAcked))
-	case protocol.PacketNumberLen6:
-		utils.WriteUint48(b, uint64(s.LargestAcked))
-	}
-
-	s.DelayTime = time.Now().Sub(s.PacketReceivedTime)
-	utils.WriteUfloat16(b, uint64(s.DelayTime/time.Microsecond))
+	s.delayTime = time.Now().Sub(s.packetReceivedTime)
+	utils.WriteUfloat16(b, uint64(s.delayTime/time.Microsecond))
 
 	var numRanges uint64
 	var numRangesWritten uint64
@@ -378,37 +363,29 @@ func (s *sack) Write(b *bytes.Buffer) error {
 
 	var firstAckBlockLength uint64
 	if !s.HasMissingRanges() {
-		firstAckBlockLength = s.LargestAcked - s.LargestInOrder + 1
+		firstAckBlockLength = s.largestAcked - s.largestInOrder + 1
 	} else {
-		if s.LargestAcked != s.AckRanges[0].LastPacketNumber {
+		if s.largestAcked != s.ackRanges[0].lastPacketNumber {
 			return errInconsistentAckLargestAcked
 		}
-		if s.LargestInOrder != s.AckRanges[len(s.AckRanges)-1].FirstPacketNumber {
-			fmt.Printf("largest in order: %d, sack: %v", s.LargestInOrder, s.AckRanges)
+		if s.largestInOrder != s.ackRanges[len(s.ackRanges)-1].firstPacketNumber {
+			fmt.Printf("largest in order: %d, sack: %v", s.largestInOrder, s.ackRanges)
 			return errInconsistentAckLowestAcked
 		}
-		firstAckBlockLength = s.LargestAcked - s.AckRanges[0].FirstPacketNumber + 1
+		firstAckBlockLength = s.largestAcked - s.ackRanges[0].firstPacketNumber + 1
 		numRangesWritten++
 	}
 
-	switch missingSequenceNumberDeltaLen {
-	case protocol.PacketNumberLen1:
-		b.WriteByte(uint8(firstAckBlockLength))
-	case protocol.PacketNumberLen2:
-		utils.WriteUint16(b, uint16(firstAckBlockLength))
-	case protocol.PacketNumberLen4:
-		utils.WriteUint32(b, uint32(firstAckBlockLength))
-	case protocol.PacketNumberLen6:
-		utils.WriteUint48(b, uint64(firstAckBlockLength))
-	}
+	n = binary.PutUvarint(numBuf, firstAckBlockLength)
+	b.Write(numBuf[:n])
 
-	for i, ackRange := range s.AckRanges {
+	for i, ackRange := range s.ackRanges {
 		if i == 0 {
 			continue
 		}
 
-		length := ackRange.LastPacketNumber - ackRange.FirstPacketNumber + 1
-		gap := s.AckRanges[i-1].FirstPacketNumber - ackRange.LastPacketNumber - 1
+		length := ackRange.lastPacketNumber - ackRange.firstPacketNumber + 1
+		gap := s.ackRanges[i-1].firstPacketNumber - ackRange.lastPacketNumber - 1
 
 		num := gap/0xFF + 1
 		if gap%0xFF == 0 {
@@ -417,16 +394,8 @@ func (s *sack) Write(b *bytes.Buffer) error {
 
 		if num == 1 {
 			b.WriteByte(uint8(gap))
-			switch missingSequenceNumberDeltaLen {
-			case protocol.PacketNumberLen1:
-				b.WriteByte(uint8(length))
-			case protocol.PacketNumberLen2:
-				utils.WriteUint16(b, uint16(length))
-			case protocol.PacketNumberLen4:
-				utils.WriteUint32(b, uint32(length))
-			case protocol.PacketNumberLen6:
-				utils.WriteUint48(b, uint64(length))
-			}
+			n = binary.PutUvarint(numBuf, length)
+			b.Write(numBuf[:n])
 			numRangesWritten++
 		} else {
 			for i := 0; i < int(num); i++ {
@@ -434,7 +403,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 				var gapWritten uint8
 
 				if i == int(num)-1 { // last block
-					lengthWritten = uint64(length)
+					lengthWritten = length
 					gapWritten = uint8(gap % 0xFF)
 				} else {
 					lengthWritten = 0
@@ -442,16 +411,8 @@ func (s *sack) Write(b *bytes.Buffer) error {
 				}
 
 				b.WriteByte(uint8(gapWritten))
-				switch missingSequenceNumberDeltaLen {
-				case protocol.PacketNumberLen1:
-					b.WriteByte(uint8(lengthWritten))
-				case protocol.PacketNumberLen2:
-					utils.WriteUint16(b, uint16(lengthWritten))
-				case protocol.PacketNumberLen4:
-					utils.WriteUint32(b, uint32(lengthWritten))
-				case protocol.PacketNumberLen6:
-					utils.WriteUint48(b, uint64(lengthWritten))
-				}
+				n = binary.PutUvarint(numBuf, lengthWritten)
+				b.Write(numBuf[:n])
 
 				numRangesWritten++
 			}
@@ -472,43 +433,43 @@ func (s *sack) Write(b *bytes.Buffer) error {
 }
 
 func (s *sack) HasMissingRanges() bool {
-	if len(s.AckRanges) > 0 {
+	if len(s.ackRanges) > 0 {
 		return true
 	}
 	return false
 }
 
 func (s *sack) validateAckRanges() bool {
-	if len(s.AckRanges) == 0 {
+	if len(s.ackRanges) == 0 {
 		return true
 	}
 
 	// if there are missing packets, there will always be at least 2 ACK ranges
-	if len(s.AckRanges) == 1 {
+	if len(s.ackRanges) == 1 {
 		return false
 	}
 
-	if s.AckRanges[0].LastPacketNumber != s.LargestAcked {
+	if s.ackRanges[0].lastPacketNumber != s.largestAcked {
 		return false
 	}
 
 	// check the validity of every single ACK range
-	for _, ackRange := range s.AckRanges {
-		if ackRange.FirstPacketNumber > ackRange.LastPacketNumber {
+	for _, ackRange := range s.ackRanges {
+		if ackRange.firstPacketNumber > ackRange.lastPacketNumber {
 			return false
 		}
 	}
 
 	// check the consistency for ACK with multiple NACK ranges
-	for i, ackRange := range s.AckRanges {
+	for i, ackRange := range s.ackRanges {
 		if i == 0 {
 			continue
 		}
-		lastAckRange := s.AckRanges[i-1]
-		if lastAckRange.FirstPacketNumber <= ackRange.FirstPacketNumber {
+		lastAckRange := s.ackRanges[i-1]
+		if lastAckRange.firstPacketNumber <= ackRange.firstPacketNumber {
 			return false
 		}
-		if lastAckRange.FirstPacketNumber <= ackRange.LastPacketNumber+1 {
+		if lastAckRange.firstPacketNumber <= ackRange.lastPacketNumber+1 {
 			return false
 		}
 	}
@@ -519,18 +480,18 @@ func (s *sack) validateAckRanges() bool {
 // numWritableNackRanges calculates the number of ACK blocks that are about to be written
 // this number is different from len(f.AckRanges) for the case of long gaps (> 255 packets)
 func (s *sack) numWritableNackRanges() uint64 {
-	if len(s.AckRanges) == 0 {
+	if len(s.ackRanges) == 0 {
 		return 0
 	}
 
 	var numRanges uint64
-	for i, ackRange := range s.AckRanges {
+	for i, ackRange := range s.ackRanges {
 		if i == 0 {
 			continue
 		}
 
-		lastAckRange := s.AckRanges[i-1]
-		gap := lastAckRange.FirstPacketNumber - ackRange.LastPacketNumber
+		lastAckRange := s.ackRanges[i-1]
+		gap := lastAckRange.firstPacketNumber - ackRange.lastPacketNumber
 		rangeLength := uint64(gap) / (0xFF + 1)
 		if uint64(gap)%(0xFF+1) != 0 {
 			rangeLength++
@@ -544,31 +505,4 @@ func (s *sack) numWritableNackRanges() uint64 {
 	}
 
 	return numRanges + 1
-}
-
-func (s *sack) getMissingSequenceNumberDeltaLen() protocol.PacketNumberLen {
-	var maxRangeLength uint64
-
-	if s.HasMissingRanges() {
-		for _, ackRange := range s.AckRanges {
-			rangeLength := ackRange.LastPacketNumber - ackRange.FirstPacketNumber + 1
-			if rangeLength > maxRangeLength {
-				maxRangeLength = rangeLength
-			}
-		}
-	} else {
-		maxRangeLength = s.LargestAcked - s.LargestInOrder + 1
-	}
-
-	if maxRangeLength <= 0xFF {
-		return protocol.PacketNumberLen1
-	}
-	if maxRangeLength <= 0xFFFF {
-		return protocol.PacketNumberLen2
-	}
-	if maxRangeLength <= 0xFFFFFFFF {
-		return protocol.PacketNumberLen4
-	}
-
-	return protocol.PacketNumberLen6
 }
