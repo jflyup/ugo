@@ -407,6 +407,7 @@ func (c *connection) handlePacket(data []byte) error {
 		log.Println("recv close:", p.packetNumber)
 		// peer already gone, close immediately
 		// no TIME_WAIT CLOSE_WAIT like TCP for now
+		atomic.StoreInt32(&c.closed, 1)
 		close(c.closeChan)
 		c.closeCallback()
 		return nil
