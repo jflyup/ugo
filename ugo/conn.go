@@ -104,6 +104,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 
 func (c *connection) run() {
 	defer c.closeCallback()
+
 	for {
 		// Close immediately if requested
 		select {
@@ -117,6 +118,8 @@ func (c *connection) run() {
 
 		var err error
 		select {
+		case <-c.closeChan:
+			return
 		case <-c.timer.C:
 			c.timerRead = true
 		case <-c.sendingScheduled:

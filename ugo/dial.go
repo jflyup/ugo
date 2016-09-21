@@ -125,14 +125,12 @@ func recvData(c net.PacketConn, conn *connection) {
 			return
 		}
 
-		if n > 4 { // TODO check packet validity
-			select {
-			case conn.receivedPackets <- buf[:n]:
-			default:
-				log.Printf("discard")
-			}
-		} else {
-			log.Printf("recv malformed data")
+		// TODO check packet validity
+		select {
+		case conn.receivedPackets <- buf[:n]:
+		default:
+			log.Printf("discard")
 		}
+
 	}
 }
