@@ -2,16 +2,12 @@ package ugo
 
 import (
 	"errors"
-	//"log"
+	"log"
 	"time"
 )
 
 var (
-	// ErrDuplicatePacket occurres when a duplicate packet is received
-	ErrDuplicatePacket = errors.New("packetReceiver: Duplicate Packet")
-	errTimeLost        = errors.New("packetReceiver: packet time lost")
-	// ErrPacketSmallerThanLastStopWaiting occurs when a packet arrives with a packet number smaller than the largest LeastUnacked of a StopWaitingFrame. If this error occurs, the packet should be ignored
-	ErrPacketSmallerThanLastStopWaiting = errors.New("packetReceiver: Packet number smaller than highest StopWaiting")
+	errTimeLost = errors.New("packetReceiver: packet time lost")
 )
 
 var (
@@ -24,7 +20,10 @@ type packetReceiver struct {
 	largestObserved        uint64
 	ignorePacketsBelow     uint64
 	currentAckFrame        *sack
-	stateChanged           bool // has an ACK for this state already been sent? Will be set to false every time a new packet arrives, and to false every time an ACK is sent
+	// has an ACK for this state already been sent?
+	// Will be set to false every time a new packet arrives,
+	// and to false every time an ACK is sent
+	stateChanged bool
 
 	packetHistory *recvHistory
 
@@ -32,7 +31,7 @@ type packetReceiver struct {
 	lowestInReceivedTimes uint64
 }
 
-// NewReceivedPacketHandler creates a new receivedPacketHandler
+// newPacketReceiver creates a new packetReceiver
 func newPacketReceiver() *packetReceiver {
 	return &packetReceiver{
 		receivedTimes: make(map[uint64]time.Time),
@@ -49,12 +48,14 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 	// we cannot detect if this packet has a duplicate number
 	// the packet has to be ignored anyway
 	if packetNumber <= h.ignorePacketsBelow {
-		return ErrPacketSmallerThanLastStopWaiting
+		log.Printf("packet %d less than last StopWaiting %d", packetNumber, h.ignorePacketsBelow)
+		return nil
 	}
 
 	_, ok := h.receivedTimes[packetNumber]
 	if packetNumber <= h.largestInOrderObserved || ok {
-		return ErrDuplicatePacket
+		log.Printf("duplicate packet %d", packetNumber)
+		return nil
 	}
 
 	h.packetHistory.ReceivedPacket(packetNumber)
@@ -83,15 +84,13 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 }
 
 func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint64) error {
-	h.stateChanged = true
 	// ignore if StopWaiting is unneeded, because we already received a StopWaiting with a higher LeastUnacked
 	if h.ignorePacketsBelow >= packetNumber {
 		return nil
 	}
 
 	h.ignorePacketsBelow = packetNumber - 1
-	// h.garbageCollectReceivedTimes()
-
+	h.stateChanged = true
 	// the LeastUnacked is the smallest packet number of any packet for
 	// which the sender is still awaiting an ack.
 	// So the largestInOrderObserved is one less than that
@@ -113,17 +112,7 @@ func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint64) error {
 	h.packetHistory.DeleteBelow(h.largestInOrderObserved)
 	h.garbageCollectReceivedTimes()
 
-	// h.packetHistory.DeleteBelow(packetNumber)
-
-	// ackRanges := h.packetHistory.GetAckRanges()
-	// // TODO
-	// if len(ackRanges) > 0 {
-	// 	n := ackRanges[len(ackRanges)-1].LastPacketNumber
-	// 	h.packetHistory.DeleteBelow(n)
-	// 	h.largestInOrderObserved = n
-	// 	h.ignorePacketsBelow = n
-	// 	h.garbageCollectReceivedTimes()
-	// }
+	log.Printf("largest in order observed:%d after receiving stopWait %d", h.largestInOrderObserved, packetNumber)
 
 	return nil
 }

@@ -395,7 +395,7 @@ func (c *connection) handlePacket(data []byte) error {
 		return nil
 	}
 
-	if p.flags == 0x10 {
+	if p.flags == finFlag {
 		log.Println("recv close:", p.packetNumber)
 		// peer already gone, close immediately
 		// no TIME_WAIT CLOSE_WAIT like TCP for now
@@ -422,7 +422,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	if p.stopWaiting != 0 {
-		log.Printf("recv stop waiting %d from %s", p.stopWaiting, c.addr.String())
+		log.Printf("%s recv stop waiting %d from %s", c.localAddr.String(), p.stopWaiting, c.addr.String())
 		c.packetReceiver.ReceivedStopWaiting(p.stopWaiting)
 	}
 
@@ -487,9 +487,6 @@ func (c *connection) closeImpl(e error, remoteClose bool) error {
 func (c *connection) sendPacket() error {
 	// Repeatedly try sending until no more data remained,
 	// or run out of the congestion window
-	if atomic.LoadInt32(&c.closed) != 0 {
-		return nil
-	}
 
 	// TODO split send and recv in 2 goroutine
 	for {
@@ -507,16 +504,16 @@ func (c *connection) sendPacket() error {
 
 		if retransmitPacket != nil {
 			// if retransmitted packet contains control message
-			if retransmitPacket.flags&0x80 == 0x80 {
+			if retransmitPacket.flags&ackFlag == ackFlag {
 				c.packetReceiver.stateChanged = true
 			}
-			if retransmitPacket.flags&0x40 == 0x40 {
+			if retransmitPacket.flags&stopFlag == stopFlag {
 				c.packetSender.stopWaitingManager.state = true
 			}
 
-			for _, streamFrame := range retransmitPacket.segments {
-				log.Println("retransmit segment", streamFrame.offset)
-				c.segmentSender.AddSegmentForRetransmission(streamFrame)
+			for _, seg := range retransmitPacket.segments {
+				log.Println("retransmit segment", seg.offset)
+				c.segmentSender.AddSegmentForRetransmission(seg)
 			}
 		}
 
@@ -529,16 +526,16 @@ func (c *connection) sendPacket() error {
 		stopWait := c.packetSender.GetStopWaitingFrame()
 
 		// get data
-		frames := c.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
+		segments := c.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
 
-		if ack == nil && len(frames) == 0 && stopWait == 0 {
+		if ack == nil && len(segments) == 0 && stopWait == 0 {
 			return nil
 		}
 
 		// Check whether we are allowed to send a packet containing only an ACK
 		onlyAck := time.Now().Sub(c.originAckTime) > protocol.AckSendDelay || c.ackNoDelay
 
-		if len(frames) == 0 && stopWait == 0 {
+		if len(segments) == 0 && stopWait == 0 {
 			if !onlyAck {
 				return nil
 			}
@@ -552,14 +549,14 @@ func (c *connection) sendPacket() error {
 			}
 		}
 
-		if len(frames) != 0 || stopWait != 0 {
+		if len(segments) != 0 || stopWait != 0 {
 			c.lastPacketNumber++
 		}
 
 		pkt := &ugoPacket{
 			packetNumber: c.lastPacketNumber,
 			sack:         ack,
-			segments:     frames,
+			segments:     segments,
 			stopWaiting:  stopWait,
 		}
 
@@ -568,7 +565,7 @@ func (c *connection) sendPacket() error {
 			return err
 		}
 
-		if pkt.flags == 0x80 {
+		if pkt.flags == ackFlag {
 			pkt.packetNumber = 0
 		}
 
@@ -587,10 +584,6 @@ func (c *connection) sendPacket() error {
 		}
 
 		c.originAckTime = time.Time{}
-
-		if pkt.flags&0x01 != 0 {
-			log.Println("send invalid data:", pkt.rawData)
-		}
 
 		c.crypt.Encrypt(pkt.rawData, pkt.rawData)
 
