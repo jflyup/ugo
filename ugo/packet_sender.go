@@ -201,7 +201,6 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 		h.rttStats.UpdateRTT(timeDelta, ack.delayTime, time.Now())
 
 		log.Printf("Estimated RTT: %dms", h.rttStats.SmoothedRTT()/time.Millisecond)
-
 	}
 
 	var ackedPackets congestion.PacketVector

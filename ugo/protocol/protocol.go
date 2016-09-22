@@ -20,9 +20,6 @@ const MaxPacketSize uint64 = 1476
 // MaxByteCount is the maximum value of a uint32
 const MaxByteCount = math.MaxUint32
 
-// MaxFrameAndPublicHeaderSize is the maximum size of a QUIC frame plus PublicHeader
-const MaxFrameAndPublicHeaderSize = MaxPacketSize - 12 /*crypto signature*/
-
 // DefaultTCPMSS is the default maximum packet size used in the Linux TCP implementation.
 // Used in QUIC for congestion window computations in bytes.
 const DefaultTCPMSS uint32 = 1460

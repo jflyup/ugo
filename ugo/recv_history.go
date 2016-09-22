@@ -74,11 +74,15 @@ func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 	for el := h.ranges.Front(); nextEl != nil; el = nextEl {
 		nextEl = el.Next()
 
-		if leastUnacked > el.Value.Start && leastUnacked <= el.Value.End {
+		if leastUnacked >= el.Value.Start && leastUnacked <= el.Value.End {
 			el.Value.Start = leastUnacked
 		}
 		if el.Value.End < leastUnacked { // delete a whole range
 			h.ranges.Remove(el)
+			// handle stopWaiting in the gap, for example, [10,8] [5,5], recv leastUnacked 7
+			if nextEl != nil && nextEl.Value.Start > leastUnacked {
+				h.ranges.InsertBefore(utils.PacketInterval{Start: leastUnacked, End: leastUnacked}, nextEl)
+			}
 		} else {
 			return
 		}

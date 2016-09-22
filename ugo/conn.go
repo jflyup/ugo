@@ -387,7 +387,7 @@ func (c *connection) handlePacket(data []byte) error {
 		return err
 	}
 
-	log.Printf("%s recv packet %d, length %d", c.localAddr.String(), p.packetNumber, p.Length)
+	log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)
 
 	if p.flags&0x01 != 0 {
 		log.Println("recv weird data:", p.rawData)
@@ -410,6 +410,7 @@ func (c *connection) handlePacket(data []byte) error {
 	}
 
 	if p.sack != nil {
+		log.Printf("%s recv ack from %s: %v", c.localAddr.String(), c.RemoteAddr().String(), p.sack)
 		if err := c.handleSack(p.sack, p.packetNumber); err != nil {
 			return err
 		}
@@ -496,7 +497,8 @@ func (c *connection) sendPacket() error {
 		}
 
 		if !c.packetSender.CongestionAllowsSending() {
-			log.Printf("congestion not allow, size: %d, bytes outstanding: %d", c.packetSender.congestion.GetCongestionWindow(), c.packetSender.BytesInFlight())
+			log.Printf("%s with %s congestion not allow, size: %d, bytes outstanding: %d",
+				c.localAddr.String(), c.RemoteAddr().String(), c.packetSender.congestion.GetCongestionWindow(), c.packetSender.BytesInFlight())
 			return nil
 		}
 
