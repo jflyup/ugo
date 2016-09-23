@@ -1,11 +1,11 @@
 package ugo
 
 type segmentSender struct {
-	c                   *connection
+	c                   *Connection
 	retransmissionQueue []*segment
 }
 
-func newSegmentSender(c *connection) *segmentSender {
+func newSegmentSender(c *Connection) *segmentSender {
 	return &segmentSender{
 		c: c,
 	}

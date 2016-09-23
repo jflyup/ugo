@@ -19,7 +19,7 @@ type listener struct {
 	err           error
 	addr          net.Addr
 	pending       []net.Conn
-	connections   map[string]*connection
+	connections   map[string]*Connection
 	stopListening func()
 }
 
@@ -36,7 +36,7 @@ func Listen(network, addr string) (net.Listener, error) {
 			L: new(sync.Mutex),
 		},
 		addr:        conn.LocalAddr(),
-		connections: make(map[string]*connection),
+		connections: make(map[string]*Connection),
 	}
 
 	// TODO implement stopListening
@@ -69,8 +69,8 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	if conn, ok := l.connections[remoteAddr.String()]; ok {
 		// TODO check data integrity
 
-		if len(buffer) == 22 && buffer[0] == packetInit {
-			log.Println("already connected, discard")
+		if len(buffer) == 22 && buffer[0] == packetInit && buffer[1] == aesEncrypt {
+			log.Println("already connected, discard:", buffer)
 		} else {
 			// feed data to connection
 			select {

@@ -120,7 +120,7 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 	if packet.packetNumber == h.largestInOrderAcked+1 {
 		h.largestInOrderAcked++
 		for i := h.largestInOrderAcked + 1; i <= h.largestAcked; i++ {
-			_, ok := h.packetHistory[uint64(i)]
+			_, ok := h.packetHistory[i]
 			if !ok {
 				h.largestInOrderAcked = i
 			} else {

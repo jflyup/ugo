@@ -8,10 +8,8 @@ const (
 	packetInit = 0
 )
 
-type encryptMethod byte
-
 const (
-	aesEncrypt = encryptMethod(iota)
+	aesEncrypt = iota
 )
 
 const (
@@ -36,4 +34,4 @@ const DefaultMaxCongestionWindow uint64 = 107
 const InitialCongestionWindow uint64 = 32
 
 // InitialIdleConnectionStateLifetime is the initial idle connection state lifetime
-const InitialIdleConnectionStateLifetime = 30 * time.Second
+const InitialIdleConnectionStateLifetime = 60 * time.Second

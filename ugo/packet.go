@@ -55,6 +55,7 @@ const (
 	stopFlag byte = 0x40
 	pshFlag  byte = 0x20
 	finFlag  byte = 0x10
+	rstFlag  byte = 0x08
 )
 
 type sackRange struct {

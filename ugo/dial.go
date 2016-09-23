@@ -3,14 +3,15 @@ package ugo
 import (
 	"encoding/binary"
 	"log"
+
+	"github.com/jflyup/ugo/ugo/protocol"
+
 	//"bytes"
 	crand "crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"time"
-
-	"github.com/jflyup/ugo/ugo/protocol"
 )
 
 var (
@@ -21,6 +22,30 @@ var (
 
 // TODO
 // DialTimeout
+
+// DialUgo connects to the remote address raddr on the network net,
+// which must be "udp", "udp4", "udp6", "unixgram".
+func DialUgo(network string, laddr, raddr string) (*Connection, error) {
+	pc, err := net.ListenPacket(network, laddr)
+	if err != nil {
+		return nil, err
+	}
+
+	var addr net.Addr
+	switch network {
+	case "udp", "udp4", "udp6":
+		addr, err = net.ResolveUDPAddr(network, raddr)
+	case "unix", "unixgram", "unixpacket":
+		addr, err = net.ResolveUnixAddr(network, raddr)
+	default:
+		return nil, errBadAddress
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return handshake(pc, addr)
+}
 
 // Dial connects to a remote host
 // The network net must be a packet-oriented netowrk:
@@ -47,7 +72,7 @@ func Dial(network, address string) (net.Conn, error) {
 	return handshake(pc, addr)
 }
 
-func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
+func handshake(pc net.PacketConn, addr net.Addr) (*Connection, error) {
 	var iv [16]byte
 	if _, err := crand.Read(iv[:]); err != nil {
 		pc.Close()
@@ -116,7 +141,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (net.Conn, error) {
 }
 
 // receive packets and feed them to the connection
-func recvData(c net.PacketConn, conn *connection) {
+func recvData(c net.PacketConn, conn *Connection) {
 	for {
 		buf := make([]byte, protocol.MaxPacketSize)
 		n, _, err := c.ReadFrom(buf)
