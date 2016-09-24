@@ -29,12 +29,18 @@ func handleClient(c net.Conn) {
 	log.Println("length of addr :", addrLen)
 
 	buf := make([]byte, addrLen)
-	c.Read(buf)
+	n, err := c.Read(buf)
+	if n != int(addrLen) || err != nil {
+		log.Printf("can't get raw addr, err: %v", err)
+		c.Close()
+		return
+	}
 	log.Println("raw addr: ", string(buf))
 	proxyConn, err := net.Dial("tcp", string(buf))
 	if err != nil {
 		log.Println("error on Dial", err)
 		c.Close()
+		proxyConn.Close()
 		return
 	}
 	go relay(c, proxyConn)
