@@ -40,7 +40,7 @@ func handleClient(c net.Conn) {
 	if err != nil {
 		log.Println("error on Dial", err)
 		c.Close()
-		proxyConn.Close()
+		//proxyConn.Close() // proxyConn may be nil
 		return
 	}
 	go relay(c, proxyConn)
@@ -61,6 +61,7 @@ func main() {
 	if l, err := ugo.Listen("udp", os.Args[1]+":9000"); err == nil {
 		for {
 			if c, err := l.Accept(); err == nil {
+
 				go handleClient(c)
 			} else {
 				log.Println("accept error")

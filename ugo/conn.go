@@ -90,6 +90,8 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		chRead:           make(chan struct{}, 1),
 		chWrite:          make(chan struct{}, 1),
 		allSent:          &sync.Cond{L: &sync.Mutex{}},
+		linger:           -1, // Graceful shutdown is default behavior
+		ackNoDelay:       false,
 
 		closeChan: make(chan struct{}, 1), // use Close(closeChan) to broadcast
 		timer:     time.NewTimer(0),
@@ -125,13 +127,19 @@ func (c *Connection) run() {
 		case <-c.sendingScheduled:
 		case p := <-c.receivedPackets:
 			err = c.handlePacket(p)
-
-			if c.originAckTime.IsZero() {
-				c.originAckTime = time.Now()
-			}
 		}
 
 		if err != nil {
+			// abortive close for now
+			if err.Error() == "fin" || err.Error() == "rst" {
+				c.mutex.Lock()
+				c.eof = true
+				c.closed = true
+				close(c.closeChan)
+				c.mutex.Unlock()
+				return
+			}
+
 			log.Println("handle error", err)
 			c.closeImpl(err, false)
 			return
@@ -271,18 +279,22 @@ func (c *Connection) Write(p []byte) (int, error) {
 
 }
 
+// Close closes the connection, may block depending on LINGER option
 func (c *Connection) Close() error {
 	return c.closeImpl(nil, false)
 }
 
+// LocalAddr returns the local network address
 func (c *Connection) LocalAddr() net.Addr {
 	return c.localAddr
 }
 
+// RemoteAddr returns the remote network address
 func (c *Connection) RemoteAddr() net.Addr {
 	return c.addr
 }
 
+// SetDeadline implements the Conn SetDeadline method
 func (c *Connection) SetDeadline(t time.Time) error {
 	c.SetReadDeadline(t)
 	c.SetWriteDeadline(t)
@@ -298,6 +310,7 @@ func (c *Connection) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
+// SetWriteDeadline implements the Conn SetWriteDeadline method
 func (c *Connection) SetWriteDeadline(t time.Time) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -315,15 +328,12 @@ func (c *Connection) SetACKNoDelay(nodelay bool) {
 // SetLinger sets the behavior of Close on a connection which still
 // has data waiting to be sent or to be acknowledged.
 //
-// If sec < 0 (the default), the operating system finishes sending the
-// data in the background.
+// If sec < 0 (the default), wait for pending data to be sent before closing the connection
+// If sec == 0, discard any unsent or unacknowledged data.
 //
-// If sec == 0, the operating system discards any unsent or
-// unacknowledged data.
-//
-// If sec > 0, the data is sent in the background as with sec < 0. On
-// some operating systems after sec seconds have elapsed any remaining
-// unsent data may be discarded.
+// If sec > 0, the data is sent in the background as with sec < 0.
+// after sec seconds have elapsed any remaining
+// unsent data will be discarded.
 func (c *Connection) SetLinger(sec int) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -389,6 +399,13 @@ func (c *Connection) handlePacket(data []byte) error {
 	if err := p.decode(); err != nil {
 		log.Printf("err: %v, recv invalid data: %v from %s", err, p.rawData, c.addr.String())
 		return err
+	}
+
+	if p.packetNumber != 0 {
+		// need ack
+		if c.originAckTime.IsZero() {
+			c.originAckTime = time.Now()
+		}
 	}
 
 	log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)

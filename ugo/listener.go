@@ -18,7 +18,7 @@ type listener struct {
 	mu            sync.Mutex
 	err           error
 	addr          net.Addr
-	pending       []net.Conn
+	pending       []*Connection
 	connections   map[string]*Connection
 	stopListening func()
 }
