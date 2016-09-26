@@ -3,7 +3,6 @@ package ugo
 import (
 	"errors"
 	"log"
-	//"sort"
 	"time"
 
 	"github.com/jflyup/ugo/ugo/congestion"
@@ -11,7 +10,7 @@ import (
 )
 
 var (
-	// ErrDuplicateOrOutOfOrderAck occurs when a duplicate or an out-of-order ACK is received
+	// errDuplicateOrOutOfOrderAck occurs when a duplicate or an out-of-order ACK is received
 	errDuplicateOrOutOfOrderAck = errors.New("packetSender: Duplicate or out-of-order ACK")
 	// errTooManyTrackedSentPackets occurs when the packetSender has to keep track of too many packets
 	errTooManyTrackedSentPackets = errors.New("Too many outstanding non-acked and non-retransmitted packets")
@@ -256,24 +255,11 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 		lostPackets,
 	)
 
-	log.Printf("sent %d, acked %d, history size: %d", h.totalSend, h.totalAcked, len(h.packetHistory))
-
 	return nil
 }
 
-// checkRetransmission returns if there is a packet queued for retransmission
-// There is one case where it gets the answer wrong:
-// if a packet has already been queued for retransmission,
-// but a belated ACK is received for this packet, this function will return true,
-// although the packet will not be returend for retransmission by DequeuePacketForRetransmission()
-func (h *packetSender) checkRetransmission() bool {
-	h.checkPacketTimeout()
-
-	return len(h.retransmissionQueue) > 0
-}
-
 func (h *packetSender) DequeuePacketForRetransmission() (packet *ugoPacket) {
-	if !h.checkRetransmission() {
+	if len(h.retransmissionQueue) == 0 {
 		return nil
 	}
 
@@ -316,13 +302,12 @@ func (h *packetSender) CongestionAllowsSending() bool {
 func (h *packetSender) CheckForError() error {
 	length := len(h.retransmissionQueue) + len(h.packetHistory)
 	if length > 2000 {
-		log.Printf("retransmissionQueue size: %d, history size: %d", len(h.retransmissionQueue), len(h.packetHistory))
 		return errTooManyTrackedSentPackets
 	}
 	return nil
 }
 
-func (h *packetSender) checkPacketTimeout() {
+func (h *packetSender) checkRTO() {
 	if time.Now().Before(h.TimeOfFirstRTO()) {
 		return
 	}
@@ -334,10 +319,15 @@ func (h *packetSender) checkPacketTimeout() {
 				Number: packet.packetNumber,
 				Length: packet.Length,
 			}}
+
 			h.congestion.OnCongestionEvent(false, h.BytesInFlight(), nil, packetsLost)
+			// in Reno algorithm, if an ACK times out (RTO timeout),
+			// slow start is used, reduce congestion window to 1 MSS
 			h.congestion.OnRetransmissionTimeout(true)
-			log.Printf("timeout retransmission, packet %d, send time:%s, now: %s", packet.packetNumber, packet.sendTime.String(), time.Now().String())
+			log.Printf("retransmission timeout, packet %d, time delta: %dns", packet.packetNumber, time.Now().Sub(packet.sendTime).Nanoseconds())
 			h.queuePacketForRetransmission(packet)
+			// reset RTO timer because this packet does not always get transmited
+			h.lastSentPacketTime = time.Now()
 			return
 		}
 	}

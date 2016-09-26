@@ -544,6 +544,8 @@ func (c *Connection) sendPacket() error {
 		if err != nil {
 			return err
 		}
+		// do this before congestion check
+		c.packetSender.checkRTO()
 
 		if !c.packetSender.CongestionAllowsSending() {
 			log.Printf("%s with %s congestion not allow, cwnd size: %d, bytes outstanding: %d",
