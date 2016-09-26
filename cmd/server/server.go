@@ -57,6 +57,18 @@ func main() {
 	defer f.Close()
 	log.SetOutput(f)
 
+	// go func() {
+	// 	sigs := make(chan os.Signal, 1)
+	// 	signal.Notify(sigs, syscall.SIGINT)
+	// 	buf := make([]byte, 1<<20)
+	// 	for {
+	// 		<-sigs
+	// 		stacklen := runtime.Stack(buf, true)
+	// 		log.Printf("=== received SIGINT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stacklen])
+	//      return
+	// 	}
+	// }()
+
 	//log.SetOutput(ioutil.Discard)
 	if l, err := ugo.Listen("udp", os.Args[1]+":9000"); err == nil {
 		for {

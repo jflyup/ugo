@@ -136,20 +136,20 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 }
 
 func (h *packetSender) SentPacket(packet *ugoPacket) error {
-	_, ok := h.packetHistory[packet.packetNumber]
-	if ok {
-		return errDuplicatePacketNumber
-	}
+	if packet.flags != ackFlag {
+		_, ok := h.packetHistory[packet.packetNumber]
+		if ok {
+			return errDuplicatePacketNumber
+		}
 
-	now := time.Now()
-	h.lastSentPacketTime = now
-	packet.sendTime = now
-	if packet.Length == 0 {
-		return errors.New("packetSender: packet cannot be empty")
-	}
+		now := time.Now()
+		h.lastSentPacketTime = now
+		packet.sendTime = now
+		if packet.Length == 0 {
+			return errors.New("packetSender: packet cannot be empty")
+		}
 
-	h.lastSentPacketNumber = packet.packetNumber
-	if packet.flags != 0x80 {
+		h.lastSentPacketNumber = packet.packetNumber
 		h.totalSend += packet.Length
 		h.bytesInFlight += packet.Length
 		h.packetHistory[packet.packetNumber] = packet

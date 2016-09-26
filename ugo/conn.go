@@ -349,7 +349,9 @@ func (c *Connection) resetTimer() {
 		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(protocol.AckSendDelay))
 	}
 	if rtoTime := c.packetSender.TimeOfFirstRTO(); !rtoTime.IsZero() {
-		nextDeadline = utils.MinTime(nextDeadline, rtoTime)
+		if rtoTime.After(time.Now()) {
+			nextDeadline = utils.MinTime(nextDeadline, rtoTime)
+		}
 	}
 
 	if nextDeadline.Equal(c.currentDeadline) {
@@ -490,7 +492,6 @@ func (c *Connection) handleSack(ack *sack, packetNum uint64) error {
 
 func (c *Connection) closeImpl(e error, remoteClose bool) error {
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
 
 	if c.closed {
 		return errors.New("close closed connection")
@@ -512,12 +513,14 @@ func (c *Connection) closeImpl(e error, remoteClose bool) error {
 		close(c.closeChan)
 		return nil
 	}
+	c.mutex.Unlock()
 
 	if e == nil && c.linger != 0 {
 		// wait until all queued messages for the connection have been successfully sent(sent and acked) or
 		// the timeout has been reached. kind of SO_LINGER option in TCP.
 		c.allSent.L.Lock()
 		for len(c.packetSender.packetHistory) != 0 {
+			log.Println("closing")
 			c.allSent.Wait()
 		}
 		c.allSent.L.Unlock()
@@ -619,16 +622,11 @@ func (c *Connection) sendPacket() error {
 
 		log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))
 		if pkt.packetNumber != 0 {
-			c.allSent.L.Lock()
 			err = c.packetSender.SentPacket(pkt)
 			if err != nil {
-				c.allSent.L.Unlock()
 				return err
 			}
-			if len(c.packetSender.packetHistory) == 0 {
-				c.allSent.Signal()
-			}
-			c.allSent.L.Unlock()
+
 		}
 
 		c.originAckTime = time.Time{}
