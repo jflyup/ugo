@@ -18,8 +18,8 @@ type listener struct {
 	mu            sync.Mutex
 	err           error
 	addr          net.Addr
-	pending       []*Connection
-	connections   map[string]*Connection
+	pending       []*Conn
+	connections   map[string]*Conn
 	stopListening func()
 }
 
@@ -36,7 +36,7 @@ func Listen(network, addr string) (net.Listener, error) {
 			L: new(sync.Mutex),
 		},
 		addr:        conn.LocalAddr(),
-		connections: make(map[string]*Connection),
+		connections: make(map[string]*Conn),
 	}
 
 	// TODO implement stopListening

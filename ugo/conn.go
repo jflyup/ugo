@@ -19,9 +19,9 @@ var (
 	errTimeout = errors.New("operation timeout")
 )
 
-// Connection is an implementation of the Conn interface for TCP network
-// connections.
-type Connection struct {
+// Conn is an implementation of the Conn interface for
+// reliable udp network connections. Use it like net.TcpConn
+type Conn struct {
 	conn         net.PacketConn
 	connectionID protocol.ConnectionID
 
@@ -72,8 +72,8 @@ type Connection struct {
 	lastPacketNumber uint64
 }
 
-func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt streamCrypto, fec *FEC, close func()) *Connection {
-	c := &Connection{
+func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt streamCrypto, fec *FEC, close func()) *Conn {
+	c := &Conn{
 		connectionID:  connectionID,
 		conn:          pc,
 		addr:          addr,
@@ -104,7 +104,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 	return c
 }
 
-func (c *Connection) run() {
+func (c *Conn) run() {
 	defer c.closeCallback()
 
 	for {
@@ -158,7 +158,7 @@ func (c *Connection) run() {
 }
 
 // implementation of the net.Conn interface.
-func (c *Connection) Read(p []byte) (int, error) {
+func (c *Conn) Read(p []byte) (int, error) {
 	c.mutex.Lock()
 	if c.eof {
 		c.mutex.Unlock()
@@ -248,7 +248,7 @@ func (c *Connection) Read(p []byte) (int, error) {
 	return bytesRead, nil
 }
 
-func (c *Connection) Write(p []byte) (int, error) {
+func (c *Conn) Write(p []byte) (int, error) {
 	c.mutex.Lock()
 	if c.closed {
 		c.mutex.Unlock()
@@ -280,22 +280,22 @@ func (c *Connection) Write(p []byte) (int, error) {
 }
 
 // Close closes the connection, may block depending on LINGER option
-func (c *Connection) Close() error {
+func (c *Conn) Close() error {
 	return c.closeImpl(nil, false)
 }
 
 // LocalAddr returns the local network address
-func (c *Connection) LocalAddr() net.Addr {
+func (c *Conn) LocalAddr() net.Addr {
 	return c.localAddr
 }
 
 // RemoteAddr returns the remote network address
-func (c *Connection) RemoteAddr() net.Addr {
+func (c *Conn) RemoteAddr() net.Addr {
 	return c.addr
 }
 
 // SetDeadline implements the Conn SetDeadline method
-func (c *Connection) SetDeadline(t time.Time) error {
+func (c *Conn) SetDeadline(t time.Time) error {
 	c.SetReadDeadline(t)
 	c.SetWriteDeadline(t)
 	return nil
@@ -303,7 +303,7 @@ func (c *Connection) SetDeadline(t time.Time) error {
 
 // SetReadDeadline sets the deadline for future Read calls.
 // A zero value for t means Read will not time out.
-func (c *Connection) SetReadDeadline(t time.Time) error {
+func (c *Conn) SetReadDeadline(t time.Time) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.readTimeout = t
@@ -311,7 +311,7 @@ func (c *Connection) SetReadDeadline(t time.Time) error {
 }
 
 // SetWriteDeadline implements the Conn SetWriteDeadline method
-func (c *Connection) SetWriteDeadline(t time.Time) error {
+func (c *Conn) SetWriteDeadline(t time.Time) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.writeTimeout = t
@@ -319,7 +319,7 @@ func (c *Connection) SetWriteDeadline(t time.Time) error {
 }
 
 // SetACKNoDelay controls whether ack for packets should delay
-func (c *Connection) SetACKNoDelay(nodelay bool) {
+func (c *Conn) SetACKNoDelay(nodelay bool) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.ackNoDelay = nodelay
@@ -334,7 +334,7 @@ func (c *Connection) SetACKNoDelay(nodelay bool) {
 // If sec > 0, the data is sent in the background as with sec < 0.
 // after sec seconds have elapsed any remaining
 // unsent data will be discarded.
-func (c *Connection) SetLinger(sec int) error {
+func (c *Conn) SetLinger(sec int) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.linger = sec
@@ -342,7 +342,7 @@ func (c *Connection) SetLinger(sec int) error {
 }
 
 // TODO timer queue
-func (c *Connection) resetTimer() {
+func (c *Conn) resetTimer() {
 	nextDeadline := c.lastNetworkActivityTime.Add(InitialIdleConnectionStateLifetime)
 
 	if !c.originAckTime.IsZero() {
@@ -369,7 +369,7 @@ func (c *Connection) resetTimer() {
 	c.currentDeadline = nextDeadline
 }
 
-func (c *Connection) handlePacket(data []byte) error {
+func (c *Conn) handlePacket(data []byte) error {
 	c.lastNetworkActivityTime = time.Now()
 
 	c.crypt.Decrypt(data, data)
@@ -457,7 +457,7 @@ func (c *Connection) handlePacket(data []byte) error {
 	return nil
 }
 
-func (c *Connection) handleSegment(s *segment) error {
+func (c *Conn) handleSegment(s *segment) error {
 	c.mutex.Lock()
 
 	err := c.segmentQueue.Push(s)
@@ -476,7 +476,7 @@ func (c *Connection) handleSegment(s *segment) error {
 	return nil
 }
 
-func (c *Connection) handleSack(ack *sack, packetNum uint64) error {
+func (c *Conn) handleSack(ack *sack, packetNum uint64) error {
 	c.allSent.L.Lock()
 	defer c.allSent.L.Unlock()
 
@@ -490,7 +490,7 @@ func (c *Connection) handleSack(ack *sack, packetNum uint64) error {
 	return nil
 }
 
-func (c *Connection) closeImpl(e error, remoteClose bool) error {
+func (c *Conn) closeImpl(e error, remoteClose bool) error {
 	c.mutex.Lock()
 
 	if c.closed {
@@ -534,7 +534,7 @@ func (c *Connection) closeImpl(e error, remoteClose bool) error {
 	return nil
 }
 
-func (c *Connection) sendPacket() error {
+func (c *Conn) sendPacket() error {
 	// Repeatedly try sending until no more data remained,
 	// or run out of the congestion window
 
@@ -686,7 +686,7 @@ func (c *Connection) sendPacket() error {
 //	}
 //}
 
-func (c *Connection) sendFin() {
+func (c *Conn) sendFin() {
 	pkt := &ugoPacket{
 		flags:        finFlag,
 		packetNumber: 0,
@@ -698,7 +698,7 @@ func (c *Connection) sendFin() {
 	c.conn.WriteTo(pkt.rawData, c.addr)
 }
 
-func (c *Connection) sendRst() {
+func (c *Conn) sendRst() {
 	pkt := &ugoPacket{
 		flags:        rstFlag,
 		packetNumber: 0,
@@ -710,7 +710,7 @@ func (c *Connection) sendRst() {
 	c.conn.WriteTo(pkt.rawData, c.addr)
 }
 
-func (c *Connection) sendAckFin() {
+func (c *Conn) sendAckFin() {
 	pkt := &ugoPacket{
 		flags:        finFlag | ackFlag,
 		packetNumber: 0,
@@ -723,21 +723,21 @@ func (c *Connection) sendAckFin() {
 }
 
 // scheduleSending signals that we have data for sending
-func (c *Connection) scheduleSending() {
+func (c *Conn) scheduleSending() {
 	select {
 	case c.sendingScheduled <- struct{}{}:
 	default:
 	}
 }
 
-func (c *Connection) lenOfDataForWriting() uint32 {
+func (c *Conn) lenOfDataForWriting() uint32 {
 	c.mutex.Lock()
 	l := uint32(len(c.dataForWriting))
 	c.mutex.Unlock()
 	return l
 }
 
-func (c *Connection) getDataForWriting(maxBytes uint64) []byte {
+func (c *Conn) getDataForWriting(maxBytes uint64) []byte {
 	c.mutex.Lock()
 	if c.dataForWriting == nil {
 		c.mutex.Unlock()

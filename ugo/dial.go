@@ -25,7 +25,7 @@ var (
 
 // DialUgo connects to the remote address raddr on the network net,
 // which must be "udp", "udp4", "udp6", "unixgram".
-func DialUgo(network string, laddr, raddr string) (*Connection, error) {
+func DialUgo(network string, laddr, raddr string) (*Conn, error) {
 	pc, err := net.ListenPacket(network, laddr)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func Dial(network, address string) (net.Conn, error) {
 	return handshake(pc, addr)
 }
 
-func handshake(pc net.PacketConn, addr net.Addr) (*Connection, error) {
+func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 	var iv [16]byte
 	if _, err := crand.Read(iv[:]); err != nil {
 		pc.Close()
@@ -103,7 +103,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Connection, error) {
 			return nil, err
 		}
 
-		// wait for a response
+		// wait for a response TODO establish connection in 0­-RTT like QUIC
 		pc.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 		n, _, err := pc.ReadFrom(buffer[:cap(buffer)])
 		pc.SetReadDeadline(time.Time{})
@@ -121,6 +121,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Connection, error) {
 			break
 		}
 
+		// TODO exponential backoff
 		retries--
 		if retries == 0 {
 			pc.Close()
@@ -141,7 +142,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Connection, error) {
 }
 
 // receive packets and feed them to the connection
-func recvData(c net.PacketConn, conn *Connection) {
+func recvData(c net.PacketConn, conn *Conn) {
 	for {
 		buf := make([]byte, protocol.MaxPacketSize)
 		n, _, err := c.ReadFrom(buf)

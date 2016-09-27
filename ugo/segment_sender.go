@@ -1,11 +1,11 @@
 package ugo
 
 type segmentSender struct {
-	c                   *Connection
+	c                   *Conn
 	retransmissionQueue []*segment
 }
 
-func newSegmentSender(c *Connection) *segmentSender {
+func newSegmentSender(c *Conn) *segmentSender {
 	return &segmentSender{
 		c: c,
 	}
@@ -16,11 +16,11 @@ func (f *segmentSender) AddSegmentForRetransmission(frame *segment) {
 }
 
 func (f *segmentSender) PopSegments(maxLen uint64) []*segment {
-	fs, currentLen := f.maybePopFramesForRetransmission(maxLen)
-	return append(fs, f.maybePopNormalFrames(maxLen-currentLen)...)
+	fs, currentLen := f.popSegmentsForRetransmission(maxLen)
+	return append(fs, f.popNormalSegments(maxLen-currentLen)...)
 }
 
-func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint64) (res []*segment, currentLen uint64) {
+func (f *segmentSender) popSegmentsForRetransmission(maxLen uint64) (res []*segment, currentLen uint64) {
 	for len(f.retransmissionQueue) > 0 {
 		seg := f.retransmissionQueue[0]
 
@@ -31,10 +31,10 @@ func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint64) (res []*s
 
 		currentLen += frameHeaderLen
 
-		splitFrame := maybeSplitOffFrame(seg, maxLen-currentLen)
-		if splitFrame != nil { // StreamFrame was split
-			res = append(res, splitFrame)
-			currentLen += splitFrame.DataLen()
+		splitSeg := maybeSplitOffFrame(seg, maxLen-currentLen)
+		if splitSeg != nil { // segment was split
+			res = append(res, splitSeg)
+			currentLen += splitSeg.DataLen()
 			break
 		}
 
@@ -45,7 +45,7 @@ func (f *segmentSender) maybePopFramesForRetransmission(maxLen uint64) (res []*s
 	return
 }
 
-func (f *segmentSender) maybePopNormalFrames(maxBytes uint64) (res []*segment) {
+func (f *segmentSender) popNormalSegments(maxBytes uint64) (res []*segment) {
 	frame := &segment{}
 	var currentLen uint64
 
@@ -58,7 +58,7 @@ func (f *segmentSender) maybePopNormalFrames(maxBytes uint64) (res []*segment) {
 	maxLen := maxBytes - currentLen - frameHeaderBytes
 
 	if f.c.lenOfDataForWriting() != 0 {
-		//sendWindowSize, _ := f.flowControlManager.SendWindowSize(s.streamID)
+		//sendWindowSize, _ := f.flowControlManager.SendWindowSize()
 		//maxLen = utils.MinByteCount(maxLen, sendWindowSize)
 	}
 
@@ -81,19 +81,20 @@ func (f *segmentSender) maybePopNormalFrames(maxBytes uint64) (res []*segment) {
 	return
 }
 
-// maybeSplitOffFrame removes the first n bytes and returns them as a separate frame. If n >= len(frame), nil is returned and nothing is modified.
-func maybeSplitOffFrame(frame *segment, n uint64) *segment {
-	if n >= frame.DataLen() {
+// maybeSplitOffFrame removes the first n bytes and returns them as a separate frame.
+// If n >= len(frame), nil is returned and nothing is modified.
+func maybeSplitOffFrame(s *segment, n uint64) *segment {
+	if n >= s.DataLen() {
 		return nil
 	}
 
 	defer func() {
-		frame.data = frame.data[n:]
-		frame.offset += n
+		s.data = s.data[n:]
+		s.offset += n
 	}()
 
 	return &segment{
-		offset: frame.offset,
-		data:   frame.data[:n],
+		offset: s.offset,
+		data:   s.data[:n],
 	}
 }
