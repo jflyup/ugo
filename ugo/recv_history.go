@@ -20,8 +20,8 @@ func newRecvHistory() *recvHistory {
 	}
 }
 
-// ReceivedPacket registers a packet with PacketNumber p and updates the ranges
-func (h *recvHistory) ReceivedPacket(p uint64) {
+// receivedPacket registers a packet with PacketNumber p and updates the ranges
+func (h *recvHistory) receivedPacket(p uint64) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
@@ -67,7 +67,7 @@ func (h *recvHistory) ReceivedPacket(p uint64) {
 	h.ranges.InsertBefore(utils.PacketInterval{Start: p, End: p}, h.ranges.Front())
 }
 
-func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
+func (h *recvHistory) deleteBelow(leastUnacked uint64) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
@@ -80,9 +80,12 @@ func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 		}
 		if el.Value.End < leastUnacked { // delete a whole range
 			h.ranges.Remove(el)
-			// handle stopWaiting in the gap, for example, [10,8] [5,5], recv stopWaiting 7
+			// handle leastUnacked in the gap, for example, [10,8] [5,5], recv stopWaiting 7
 			if nextEl != nil && nextEl.Value.Start > leastUnacked {
 				h.ranges.InsertBefore(utils.PacketInterval{Start: leastUnacked, End: leastUnacked}, nextEl)
+			} else if nextEl == nil {
+				// if leastUnacked > largestObserved, create a new range
+				h.ranges.PushBack(utils.PacketInterval{Start: leastUnacked, End: leastUnacked})
 			}
 		} else {
 			return
@@ -91,7 +94,7 @@ func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 }
 
 // getAckRanges gets a slice of all AckRanges that can be used in an SACK
-func (h *recvHistory) getAckRanges() []sackRange {
+func (h *recvHistory) getAckRanges() []ackRange {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
 
@@ -99,10 +102,10 @@ func (h *recvHistory) getAckRanges() []sackRange {
 		return nil
 	}
 
-	var ackRanges []sackRange
+	var ackRanges []ackRange
 
 	for el := h.ranges.Back(); el != nil; el = el.Prev() {
-		ackRanges = append(ackRanges, sackRange{firstPacketNumber: el.Value.Start, lastPacketNumber: el.Value.End})
+		ackRanges = append(ackRanges, ackRange{firstPacketNumber: el.Value.Start, lastPacketNumber: el.Value.End})
 	}
 
 	return ackRanges

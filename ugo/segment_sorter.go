@@ -30,7 +30,7 @@ func newSegmentSorter() *segmentSorter {
 	return &s
 }
 
-func (s *segmentSorter) Push(seg *segment) error {
+func (s *segmentSorter) push(seg *segment) error {
 	_, ok := s.queuedFrames[seg.offset]
 	if ok {
 		return errDuplicateStreamData
@@ -97,8 +97,8 @@ func (s *segmentSorter) Push(seg *segment) error {
 	return nil
 }
 
-func (s *segmentSorter) Pop() *segment {
-	seg := s.Head()
+func (s *segmentSorter) pop() *segment {
+	seg := s.head()
 	if seg != nil {
 		s.readPosition += seg.DataLen()
 		delete(s.queuedFrames, seg.offset)
@@ -106,7 +106,7 @@ func (s *segmentSorter) Pop() *segment {
 	return seg
 }
 
-func (s *segmentSorter) Head() *segment {
+func (s *segmentSorter) head() *segment {
 	frame, ok := s.queuedFrames[s.readPosition]
 	if ok {
 		return frame

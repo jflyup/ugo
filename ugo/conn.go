@@ -169,7 +169,7 @@ func (c *Conn) Read(p []byte) (int, error) {
 	bytesRead := 0
 	for bytesRead < len(p) {
 		c.mutex.Lock()
-		frame := c.segmentQueue.Head()
+		frame := c.segmentQueue.head()
 
 		if frame == nil && bytesRead > 0 {
 			c.mutex.Unlock()
@@ -191,8 +191,8 @@ func (c *Conn) Read(p []byte) (int, error) {
 			if frame != nil {
 				// Pop and continue if the frame doesn't have any new data
 				if frame.offset+frame.DataLen() <= c.readOffset {
-					c.segmentQueue.Pop()
-					frame = c.segmentQueue.Head()
+					c.segmentQueue.pop()
+					frame = c.segmentQueue.head()
 
 					continue
 				}
@@ -216,7 +216,7 @@ func (c *Conn) Read(p []byte) (int, error) {
 			select {
 			case <-c.chRead:
 				c.mutex.Lock()
-				frame = c.segmentQueue.Head()
+				frame = c.segmentQueue.head()
 			case <-timeout:
 				return bytesRead, errTimeout
 			case <-c.closeChan:
@@ -240,7 +240,7 @@ func (c *Conn) Read(p []byte) (int, error) {
 		//		s.onData() // so that a possible WINDOW_UPDATE is sent
 		if c.readPosInFrame >= int(frame.DataLen()) {
 			c.mutex.Lock()
-			c.segmentQueue.Pop()
+			c.segmentQueue.pop()
 			c.mutex.Unlock()
 		}
 	}
@@ -341,6 +341,8 @@ func (c *Conn) SetLinger(sec int) error {
 	return nil
 }
 
+// TODO SetKeepAlive
+
 // TODO timer queue
 func (c *Conn) resetTimer() {
 	nextDeadline := c.lastNetworkActivityTime.Add(InitialIdleConnectionStateLifetime)
@@ -431,7 +433,7 @@ func (c *Conn) handlePacket(data []byte) error {
 	}
 
 	if p.packetNumber != 0 {
-		if err := c.packetReceiver.ReceivedPacket(p.packetNumber); err != nil {
+		if err := c.packetReceiver.receivedPacket(p.packetNumber); err != nil {
 			return err
 		}
 	}
@@ -460,7 +462,7 @@ func (c *Conn) handlePacket(data []byte) error {
 func (c *Conn) handleSegment(s *segment) error {
 	c.mutex.Lock()
 
-	err := c.segmentQueue.Push(s)
+	err := c.segmentQueue.push(s)
 	if err != nil && err != errDuplicateStreamData {
 		c.mutex.Unlock()
 		return err
@@ -480,7 +482,7 @@ func (c *Conn) handleSack(ack *sack, packetNum uint64) error {
 	c.allSent.L.Lock()
 	defer c.allSent.L.Unlock()
 
-	if err := c.packetSender.ReceivedAck(ack, packetNum); err != nil {
+	if err := c.packetSender.receivedAck(ack, packetNum); err != nil {
 		return err
 	}
 	if len(c.packetSender.packetHistory) == 0 {
@@ -516,6 +518,7 @@ func (c *Conn) closeImpl(e error, remoteClose bool) error {
 	c.mutex.Unlock()
 
 	if e == nil && c.linger != 0 {
+		// TODO should also check whether dataForWriting is nil
 		// wait until all queued messages for the connection have been successfully sent(sent and acked) or
 		// the timeout has been reached. kind of SO_LINGER option in TCP.
 		c.allSent.L.Lock()
@@ -539,6 +542,8 @@ func (c *Conn) sendPacket() error {
 	// or run out of the congestion window
 
 	// TODO send/handle packets in each goroutine?
+	// sending loop may lead to false RTO since ack arrives
+	// but sender didn't handle in time
 	for {
 		err := c.packetSender.CheckForError()
 		if err != nil {
@@ -624,7 +629,7 @@ func (c *Conn) sendPacket() error {
 
 		log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))
 		if pkt.packetNumber != 0 {
-			err = c.packetSender.SentPacket(pkt)
+			err = c.packetSender.sentPacket(pkt)
 			if err != nil {
 				return err
 			}

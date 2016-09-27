@@ -58,7 +58,7 @@ const (
 	rstFlag  byte = 0x08
 )
 
-type sackRange struct {
+type ackRange struct {
 	firstPacketNumber uint64
 	lastPacketNumber  uint64
 }
@@ -70,11 +70,12 @@ type sack struct {
 	// has to be ordered.
 	// The ACK range with the highest FirstPacketNumber goes first,
 	// the ACK range with the lowest FirstPacketNumber goes last
-	ackRanges          []sackRange
+	ackRanges          []ackRange
 	delayTime          time.Duration
 	packetReceivedTime time.Time
 }
 
+// TODO test wrapped offset
 type segment struct {
 	offset uint64
 	data   []byte
@@ -280,11 +281,11 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 	}
 
 	if hasMissingRanges {
-		ackRange := sackRange{
+		ack := ackRange{
 			firstPacketNumber: (largestAcked - ackBlockLength) + 1,
 			lastPacketNumber:  s.largestAcked,
 		}
-		s.ackRanges = append(s.ackRanges, ackRange)
+		s.ackRanges = append(s.ackRanges, ack)
 
 		var inLongBlock bool
 		var lastRangeComplete bool
@@ -305,11 +306,11 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 				s.ackRanges[len(s.ackRanges)-1].lastPacketNumber -= uint64(gap)
 			} else {
 				lastRangeComplete = false
-				ackRange := sackRange{
+				ack := ackRange{
 					lastPacketNumber: s.ackRanges[len(s.ackRanges)-1].firstPacketNumber - uint64(gap) - 1,
 				}
-				ackRange.firstPacketNumber = ackRange.lastPacketNumber - ackBlockLength + 1
-				s.ackRanges = append(s.ackRanges, ackRange)
+				ack.firstPacketNumber = ack.lastPacketNumber - ackBlockLength + 1
+				s.ackRanges = append(s.ackRanges, ack)
 			}
 
 			if ackBlockLength > 0 {
@@ -341,7 +342,7 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 func (s *sack) Write(b *bytes.Buffer) error {
 	var typeByte uint8
 
-	if s.HasMissingRanges() {
+	if s.hasMissingRanges() {
 		typeByte |= 0x20
 	}
 
@@ -355,7 +356,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 
 	var numRanges uint64
 	var numRangesWritten uint64
-	if s.HasMissingRanges() {
+	if s.hasMissingRanges() {
 		numRanges = s.numWritableNackRanges()
 		if numRanges > 0xFF {
 			panic("AckFrame: Too many ACK ranges")
@@ -364,7 +365,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 	}
 
 	var firstAckBlockLength uint64
-	if !s.HasMissingRanges() {
+	if !s.hasMissingRanges() {
 		firstAckBlockLength = s.largestAcked - s.largestInOrder + 1
 	} else {
 		if s.largestAcked != s.ackRanges[0].lastPacketNumber {
@@ -434,7 +435,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 	return nil
 }
 
-func (s *sack) HasMissingRanges() bool {
+func (s *sack) hasMissingRanges() bool {
 	if len(s.ackRanges) > 0 {
 		return true
 	}

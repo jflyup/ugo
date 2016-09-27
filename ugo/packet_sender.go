@@ -134,7 +134,7 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 	h.stopWaitingManager.SetBoundary(h.largestInOrderAcked)
 }
 
-func (h *packetSender) SentPacket(packet *ugoPacket) error {
+func (h *packetSender) sentPacket(packet *ugoPacket) error {
 	if packet.flags != ackFlag {
 		_, ok := h.packetHistory[packet.packetNumber]
 		if ok {
@@ -164,7 +164,7 @@ func (h *packetSender) SentPacket(packet *ugoPacket) error {
 	return nil
 }
 
-func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
+func (h *packetSender) receivedAck(ack *sack, withPacketNumber uint64) error {
 	if ack.largestAcked > h.lastSentPacketNumber {
 		return errAckForUnsentPacket
 	}
@@ -206,7 +206,7 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 	var lostPackets congestion.PacketVector
 
 	// in ideal condition, h.largestInOrderAcked should be equal with ack.LargestInOrder,
-	// it not, it means newest ACK lost or out-of-order/delayed ACK
+	// it not, it means newest ACK lost or out-of-order, delayed ACK or RTO
 	for i := h.largestInOrderAcked; i < ack.largestInOrder; i++ {
 		p := h.ackPacket(i)
 		if p != nil {
@@ -216,7 +216,7 @@ func (h *packetSender) ReceivedAck(ack *sack, withPacketNumber uint64) error {
 
 	ackRangeIndex := 0
 	for i := ack.largestInOrder; i <= ack.largestAcked; i++ {
-		if ack.HasMissingRanges() {
+		if ack.hasMissingRanges() {
 			ackRange := ack.ackRanges[len(ack.ackRanges)-1-ackRangeIndex]
 
 			if i > ackRange.lastPacketNumber && ackRangeIndex < len(ack.ackRanges)-1 {
