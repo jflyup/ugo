@@ -7,12 +7,13 @@ import (
 )
 
 type recvHistory struct {
+	// TODO use interval tree instead
 	ranges *utils.PacketIntervalList
 
 	mutex sync.RWMutex
 }
 
-// newReceivedPacketHistory creates a new received packet history
+// newRecvHistory creates a new received packet history
 func newRecvHistory() *recvHistory {
 	return &recvHistory{
 		ranges: utils.NewPacketIntervalList(),
@@ -52,7 +53,7 @@ func (h *recvHistory) ReceivedPacket(p uint64) {
 				h.ranges.Remove(el)
 				return
 			}
-			return // if the two ranges were not merge, we're done here
+			return // if the two ranges didn't merge, we're done here
 		}
 
 		// create a new range at the end
@@ -79,7 +80,7 @@ func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 		}
 		if el.Value.End < leastUnacked { // delete a whole range
 			h.ranges.Remove(el)
-			// handle stopWaiting in the gap, for example, [10,8] [5,5], recv leastUnacked 7
+			// handle stopWaiting in the gap, for example, [10,8] [5,5], recv stopWaiting 7
 			if nextEl != nil && nextEl.Value.Start > leastUnacked {
 				h.ranges.InsertBefore(utils.PacketInterval{Start: leastUnacked, End: leastUnacked}, nextEl)
 			}
@@ -89,8 +90,8 @@ func (h *recvHistory) DeleteBelow(leastUnacked uint64) {
 	}
 }
 
-// GetAckRanges gets a slice of all AckRanges that can be used in an AckFrame
-func (h *recvHistory) GetAckRanges() []sackRange {
+// getAckRanges gets a slice of all AckRanges that can be used in an SACK
+func (h *recvHistory) getAckRanges() []sackRange {
 	h.mutex.RLock()
 	defer h.mutex.RUnlock()
 

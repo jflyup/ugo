@@ -7,19 +7,16 @@ import (
 )
 
 var (
-	errTimeLost = errors.New("packetReceiver: packet time lost")
-)
-
-var (
+	errTimeLost                          = errors.New("packetReceiver: packet time lost")
 	errInvalidPacketNumber               = errors.New("packetReceiver: Invalid packet number")
-	errTooManyOutstandingReceivedPackets = errors.New("TooManyOutstandingReceivedPackets")
+	errTooManyOutstandingReceivedPackets = errors.New("packetReceiver: Too Many Outstanding Received Packets")
 )
 
 type packetReceiver struct {
 	largestInOrderObserved uint64
 	largestObserved        uint64
 	ignorePacketsBelow     uint64
-	currentAckFrame        *sack
+	currentSack            *sack
 	// has an ACK for this state already been sent?
 	// Will be set to false every time a new packet arrives,
 	// and to false every time an ACK is sent
@@ -44,11 +41,9 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 		return errInvalidPacketNumber
 	}
 
-	// if the packet number < StopWaiting,
-	// we cannot detect if this packet has a duplicate number
-	// the packet has to be ignored anyway
+	// ignore packet below stopWaiting
 	if packetNumber <= h.ignorePacketsBelow {
-		log.Printf("packet %d less than last StopWaiting %d", packetNumber, h.ignorePacketsBelow)
+		log.Printf("packet %d < last StopWaiting %d", packetNumber, h.ignorePacketsBelow)
 		return nil
 	}
 
@@ -61,7 +56,7 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 	h.packetHistory.ReceivedPacket(packetNumber)
 
 	h.stateChanged = true
-	h.currentAckFrame = nil
+	h.currentSack = nil
 
 	if packetNumber > h.largestObserved {
 		h.largestObserved = packetNumber
@@ -69,33 +64,50 @@ func (h *packetReceiver) ReceivedPacket(packetNumber uint64) error {
 
 	if packetNumber == h.largestInOrderObserved+1 {
 		h.largestInOrderObserved = packetNumber
+		delete(h.receivedTimes, h.largestInOrderObserved-1)
+		// try to increase the largestInOrderObserved if out-of-order packet arrives
+		for i := h.largestInOrderObserved + 1; i <= h.largestObserved; i++ {
+			_, ok := h.receivedTimes[i]
+			if ok {
+				h.largestInOrderObserved++
+				delete(h.receivedTimes, h.largestInOrderObserved-1)
+			}
+		}
+
 		h.packetHistory.DeleteBelow(h.largestInOrderObserved)
-		delete(h.receivedTimes, packetNumber-1)
+
+		// verify the correctness of ack
+		if len(h.packetHistory.getAckRanges()) == 1 {
+			// if no missing packet, largestInOrderObserved should be equal with largestObserved
+			if h.largestInOrderObserved != h.largestObserved {
+				log.Println("BUG: no missing packet, but largestInOrderObserved != largestObserved")
+			}
+		}
 	}
 
 	h.receivedTimes[packetNumber] = time.Now()
 	h.lowestInReceivedTimes = h.largestInOrderObserved
 
-	if uint32(len(h.receivedTimes)) > 1000 {
+	if len(h.receivedTimes) > 1000 {
 		return errTooManyOutstandingReceivedPackets
 	}
 
 	return nil
 }
 
-func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint64) error {
+func (h *packetReceiver) receivedStopWaiting(stopWaiting uint64) error {
 	// ignore if StopWaiting is unneeded, because we already received a StopWaiting with a higher LeastUnacked
-	if h.ignorePacketsBelow >= packetNumber {
+	if h.ignorePacketsBelow >= stopWaiting {
 		return nil
 	}
 
-	h.ignorePacketsBelow = packetNumber - 1
+	h.ignorePacketsBelow = stopWaiting - 1
 	h.stateChanged = true
-	// the LeastUnacked is the smallest packet number of any packet for
+	// the stopWaiting is the smallest packet number of any packet for
 	// which the sender is still awaiting an ack.
-	// So the largestInOrderObserved is one less than that
-	if packetNumber > h.largestInOrderObserved {
-		h.largestInOrderObserved = packetNumber - 1
+	// So the largestInOrderObserved is one less than it
+	if stopWaiting > h.largestInOrderObserved {
+		h.largestInOrderObserved = stopWaiting - 1
 	}
 
 	// increase the largestInOrderObserved, if this is the lowest missing packet
@@ -112,12 +124,12 @@ func (h *packetReceiver) ReceivedStopWaiting(packetNumber uint64) error {
 	h.packetHistory.DeleteBelow(h.largestInOrderObserved)
 	h.garbageCollectReceivedTimes()
 
-	log.Printf("largest in order observed:%d after receiving stopWait %d", h.largestInOrderObserved, packetNumber)
+	log.Printf("largest in order observed:%d after receiving stopWait %d", h.largestInOrderObserved, stopWaiting)
 
 	return nil
 }
 
-func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
+func (h *packetReceiver) buildSack(dequeue bool) (*sack, error) {
 	if !h.stateChanged {
 		return nil, nil
 	}
@@ -126,27 +138,27 @@ func (h *packetReceiver) GetAckFrame(dequeue bool) (*sack, error) {
 		h.stateChanged = false
 	}
 
-	if h.currentAckFrame != nil {
-		return h.currentAckFrame, nil
+	if h.currentSack != nil {
+		return h.currentSack, nil
 	}
 
 	packetReceivedTime, ok := h.receivedTimes[h.largestObserved]
 	if !ok {
 		return nil, errTimeLost
 	}
-	// packetReceivedTime := time.Now()
-	ackRanges := h.packetHistory.GetAckRanges()
-	h.currentAckFrame = &sack{
+
+	ackRanges := h.packetHistory.getAckRanges()
+	h.currentSack = &sack{
 		largestAcked:       h.largestObserved,
-		largestInOrder:     uint64(ackRanges[len(ackRanges)-1].firstPacketNumber),
+		largestInOrder:     ackRanges[len(ackRanges)-1].firstPacketNumber,
 		packetReceivedTime: packetReceivedTime,
 	}
 
 	if len(ackRanges) > 1 {
-		h.currentAckFrame.ackRanges = ackRanges
+		h.currentSack.ackRanges = ackRanges
 	}
 
-	return h.currentAckFrame, nil
+	return h.currentSack, nil
 }
 
 func (h *packetReceiver) garbageCollectReceivedTimes() {

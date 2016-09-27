@@ -40,9 +40,9 @@ func (rb *refBuffer) release() {
 
 var (
 	// ErrInvalidAckRanges occurs when a client sends inconsistent ACK ranges
-	ErrInvalidAckRanges = errors.New("AckFrame: ACK frame contains invalid ACK ranges")
+	ErrInvalidAckRanges = errors.New("SACK contains invalid ACK ranges")
 	// ErrInvalidFirstAckRange occurs when the first ACK range contains no packets
-	ErrInvalidFirstAckRange = errors.New("AckFrame: ACK frame has invalid first ACK range")
+	ErrInvalidFirstAckRange = errors.New("SACK has invalid first ACK range")
 )
 
 var (
@@ -63,6 +63,7 @@ type sackRange struct {
 	lastPacketNumber  uint64
 }
 
+// Selective Acknowledgment
 type sack struct {
 	largestAcked   uint64
 	largestInOrder uint64

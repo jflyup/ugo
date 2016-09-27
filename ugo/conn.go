@@ -451,7 +451,7 @@ func (c *Connection) handlePacket(data []byte) error {
 
 	if p.stopWaiting != 0 {
 		log.Printf("%s recv stop waiting %d from %s", c.localAddr.String(), p.stopWaiting, c.addr.String())
-		c.packetReceiver.ReceivedStopWaiting(p.stopWaiting)
+		c.packetReceiver.receivedStopWaiting(p.stopWaiting)
 	}
 
 	return nil
@@ -571,7 +571,7 @@ func (c *Connection) sendPacket() error {
 		}
 
 		// TODO function pack()
-		ack, err := c.packetReceiver.GetAckFrame(false)
+		ack, err := c.packetReceiver.buildSack(false)
 		if err != nil {
 			return err
 		}
@@ -596,7 +596,7 @@ func (c *Connection) sendPacket() error {
 
 		// Pop the ACK frame now that we are sure we're gonna send it
 		if ack != nil {
-			_, err = c.packetReceiver.GetAckFrame(true)
+			_, err = c.packetReceiver.buildSack(true)
 			if err != nil {
 				return err
 			}
