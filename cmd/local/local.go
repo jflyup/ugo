@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -16,13 +17,13 @@ import (
 )
 
 const (
-	IPv4       = 1
-	DomainName = 3
-	IPv6       = 4
+	ipV4       = 1
+	domainName = 3
+	ipV6       = 4
 
-	Connect   = 1
-	Bind      = 2
-	Associate = 3
+	connectMethod   = 1
+	bindMethod      = 2
+	associateMethod = 3
 
 	// The maximum packet size of any udp Associate packet, based on ethernet's max size,
 	// minus the IP and UDP headers. IPv4 has a 20 byte header, UDP adds an
@@ -38,7 +39,7 @@ const (
 	networkUnreachable
 	hostUnreachable
 	connectionRefused
-	TTLExpired
+	ttlExpired
 	commandNotSupported
 	addrTypeNotSupported
 )
@@ -63,11 +64,11 @@ func handleRequest(c net.Conn) {
 	}
 
 	switch header[1] {
-	case Connect:
+	case connectMethod:
 		handleConnect(c)
-	case Bind:
+	case bindMethod:
 		handleBind(c)
-	case Associate:
+	case associateMethod:
 		handleUDP(c)
 	default:
 		sendReply(c, commandNotSupported)
@@ -100,15 +101,15 @@ func doConnect(c net.Conn, command uint8) (proxyConn net.Conn, err error) {
 	c.Read(addrType)
 	var host string
 	switch addrType[0] {
-	case IPv4:
+	case ipV4:
 		ipv4 := make(net.IP, net.IPv4len)
 		c.Read(ipv4)
 		host = ipv4.String()
-	case IPv6:
+	case ipV6:
 		ipv6 := make(net.IP, net.IPv6len)
 		c.Read(ipv6)
 		host = ipv6.String()
-	case DomainName:
+	case domainName:
 		var domainLen uint8
 		binary.Read(c, binary.BigEndian, &domainLen)
 		domain := make([]byte, domainLen)
@@ -128,6 +129,9 @@ func doConnect(c net.Conn, command uint8) (proxyConn net.Conn, err error) {
 
 	//timeout := time.Duration(10 * time.Second)
 	client, err := ugo.Dial("udp", os.Args[1]+":9000")
+	// cast it to ugo.Conn for setting some options or use ugo.DialUgo
+	// ugoConn := client.(*ugo.Conn)
+	// ugoConn.SetACKNoDelay(true)
 
 	if err != nil {
 		log.Println("fail to connect to ugo server", err)
@@ -136,13 +140,20 @@ func doConnect(c net.Conn, command uint8) (proxyConn net.Conn, err error) {
 	}
 
 	sendReply(c, succeeded)
-	binary.Write(client, binary.BigEndian, uint16(len(addr)))
-	client.Write([]byte(addr))
+	// send original request host
+
+	// since ugo.Conn didn't accumulate data, send as much as possible one time
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, uint16(len(addr)))
+	buf.Write([]byte(addr))
+
+	client.Write(buf.Bytes())
+
 	return client, nil
 }
 
 func handleConnect(c net.Conn) {
-	proxyConn, err := doConnect(c, Connect)
+	proxyConn, err := doConnect(c, connectMethod)
 	if err != nil {
 		c.Close()
 	} else {
@@ -182,7 +193,7 @@ func handleUDP(c net.Conn) {
 		c.Read(dummy)
 	}
 
-	proxyConn, err := doConnect(c, Associate)
+	proxyConn, err := doConnect(c, associateMethod)
 	if err != nil {
 		c.Close()
 	} else {
@@ -200,7 +211,7 @@ func handleNewConn(c net.Conn) {
 	}
 
 	if version := buf[0]; version != 5 {
-		log.Printf("only support socks5, request from: ", c.RemoteAddr())
+		log.Println("only support socks5, request from: ", c.RemoteAddr())
 		c.Close()
 		return
 	}

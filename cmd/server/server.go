@@ -57,6 +57,7 @@ func main() {
 	defer f.Close()
 	log.SetOutput(f)
 
+	// Ctrl+c print call stack to debug
 	// go func() {
 	// 	sigs := make(chan os.Signal, 1)
 	// 	signal.Notify(sigs, syscall.SIGINT)
@@ -65,7 +66,7 @@ func main() {
 	// 		<-sigs
 	// 		stacklen := runtime.Stack(buf, true)
 	// 		log.Printf("=== received SIGINT ===\n*** goroutine dump...\n%s\n*** end\n", buf[:stacklen])
-	//      return
+	// 		return
 	// 	}
 	// }()
 
