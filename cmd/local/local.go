@@ -247,13 +247,13 @@ func main() {
 
 	l, err := net.Listen("tcp", ":1080")
 	if err != nil {
-		log.Fatal("listen error", err)
+		log.Fatal("listen error: ", err)
 	}
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Fatal("accept error", err)
+			log.Fatal("accept error: ", err)
 		}
 
 		go handleNewConn(conn)

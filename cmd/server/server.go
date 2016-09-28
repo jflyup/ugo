@@ -22,20 +22,19 @@ func relay(in, out net.Conn) {
 func handleClient(c net.Conn) {
 	var addrLen uint16
 	if err := binary.Read(c, binary.BigEndian, &addrLen); err != nil {
-		log.Println("read length of addr error:", err)
+		log.Println("read length of host error:", err)
 		c.Close()
 		return
 	}
-	log.Println("length of addr :", addrLen)
 
 	buf := make([]byte, addrLen)
 	n, err := c.Read(buf)
 	if n != int(addrLen) || err != nil {
-		log.Printf("can't get raw addr, err: %v", err)
+		log.Printf("can't get original request host, err: %v", err)
 		c.Close()
 		return
 	}
-	log.Println("raw addr: ", string(buf))
+	log.Println("original request host: ", string(buf))
 	proxyConn, err := net.Dial("tcp", string(buf))
 	if err != nil {
 		log.Println("error on Dial", err)

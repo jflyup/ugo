@@ -62,31 +62,34 @@ func newPacketSender() *packetSender {
 }
 
 func (h *packetSender) ackPacket(packetNumber uint64) *ugoPacket {
-	packet, ok := h.packetHistory[packetNumber]
-	if ok && !packet.retransmitted {
-		// if the packet is marked as retransmitted and it exist in packetHistory,
-		// it means this packet is queued for retransmission,
-		// but ACK for it comes before resending
-		if h.bytesInFlight < packet.Length {
-			log.Println("BUG: bytes in flight < 0")
-			h.bytesInFlight = 0
-			h.totalAcked += packet.Length
-		} else {
-			h.bytesInFlight -= packet.Length
-			h.totalAcked += packet.Length
+	if packetNumber != 0 {
+		packet, ok := h.packetHistory[packetNumber]
+		if ok && !packet.retransmitted {
+			// if the packet is marked as retransmitted and exists in packetHistory,
+			// it means this packet is queued for retransmission,
+			// but an ACK for it comes before resending
+			if h.bytesInFlight < packet.Length {
+				log.Println("BUG: bytes in flight < 0")
+				h.bytesInFlight = 0
+				h.totalAcked += packet.Length
+			} else {
+				h.bytesInFlight -= packet.Length
+				h.totalAcked += packet.Length
+			}
 		}
+
+		if h.largestInOrderAcked == packetNumber-1 {
+			h.largestInOrderAcked++
+
+			// update stop waiting
+			h.stopWaitingManager.largestLeastUnackedSent = h.largestInOrderAcked + 1
+		}
+
+		delete(h.packetHistory, packetNumber)
+
+		return packet
 	}
-
-	if h.largestInOrderAcked == packetNumber-1 {
-		h.largestInOrderAcked++
-
-		// update stop waiting
-		h.stopWaitingManager.largestLeastUnackedSent = h.largestInOrderAcked + 1
-	}
-
-	delete(h.packetHistory, packetNumber)
-
-	return packet
+	return nil
 }
 
 func (h *packetSender) nackPacket(packetNumber uint64) (*ugoPacket, error) {
