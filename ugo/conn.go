@@ -350,7 +350,7 @@ func (c *Conn) resetTimer() {
 	if !c.originAckTime.IsZero() {
 		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(protocol.AckSendDelay))
 	}
-	if rtoTime := c.packetSender.TimeOfFirstRTO(); !rtoTime.IsZero() {
+	if rtoTime := c.packetSender.timeOfFirstRTO(); !rtoTime.IsZero() {
 		if rtoTime.After(time.Now()) {
 			nextDeadline = utils.MinTime(nextDeadline, rtoTime)
 		}
@@ -558,7 +558,7 @@ func (c *Conn) sendPacket() error {
 			return nil
 		}
 
-		retransmitPacket := c.packetSender.DequeuePacketForRetransmission()
+		retransmitPacket := c.packetSender.dequeuePacketForRetransmission()
 
 		if retransmitPacket != nil {
 			// if retransmitted packet contains control message

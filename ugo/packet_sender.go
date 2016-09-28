@@ -128,8 +128,6 @@ func (h *packetSender) queuePacketForRetransmission(packet *ugoPacket) {
 		}
 	}
 
-	log.Printf("retransfer packet %d, flag: %d, length %d", packet.packetNumber, packet.flags, packet.Length)
-
 	// send stopWaiting only when restransmisson happened
 	h.stopWaitingManager.SetBoundary(h.largestInOrderAcked)
 }
@@ -258,7 +256,7 @@ func (h *packetSender) receivedAck(ack *sack, withPacketNumber uint64) error {
 	return nil
 }
 
-func (h *packetSender) DequeuePacketForRetransmission() (packet *ugoPacket) {
+func (h *packetSender) dequeuePacketForRetransmission() (packet *ugoPacket) {
 	if len(h.retransmissionQueue) == 0 {
 		return nil
 	}
@@ -308,7 +306,7 @@ func (h *packetSender) CheckForError() error {
 }
 
 func (h *packetSender) checkRTO() {
-	if time.Now().Before(h.TimeOfFirstRTO()) {
+	if time.Now().Before(h.timeOfFirstRTO()) {
 		return
 	}
 
@@ -324,9 +322,10 @@ func (h *packetSender) checkRTO() {
 			// in Reno algorithm, if an ACK times out (RTO timeout),
 			// slow start is used, reduce congestion window to 1 MSS
 			h.congestion.OnRetransmissionTimeout(true)
-			log.Printf("retransmission timeout, packet %d, time delta: %dns", packet.packetNumber, time.Now().Sub(packet.sendTime).Nanoseconds())
+			log.Printf("retransmission timeout, packet %d, time delta: %dms", packet.packetNumber, time.Now().Sub(packet.sendTime).Nanoseconds()/int64(time.Millisecond))
 			h.queuePacketForRetransmission(packet)
-			// reset RTO timer because this packet does not always get transmited
+			// reset RTO timer since this packet does not always get transmited immediately.
+			// After a RTO, congestion window may not allow to send
 			h.lastSentPacketTime = time.Now()
 			return
 		}
@@ -341,7 +340,7 @@ func (h *packetSender) getRTO() time.Duration {
 	return utils.MaxDuration(rto, minRetransmissionTime)
 }
 
-func (h *packetSender) TimeOfFirstRTO() time.Time {
+func (h *packetSender) timeOfFirstRTO() time.Time {
 	if h.lastSentPacketTime.IsZero() {
 		return time.Time{}
 	}

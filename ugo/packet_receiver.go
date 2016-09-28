@@ -156,9 +156,6 @@ func (h *packetReceiver) buildSack(dequeue bool) (*sack, error) {
 	}
 
 	if len(ackRanges) > 1 {
-		// in most cases, len(ackRanges)==0 indicates no missing packets,
-		// but there is a counterexample for this:
-		// if packet 1 is missing, then packet 2 arrives, the ackRanges is [2,2]
 		h.currentSack.ackRanges = ackRanges
 	}
 

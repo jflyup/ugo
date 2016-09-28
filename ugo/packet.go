@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -39,13 +38,11 @@ func (rb *refBuffer) release() {
 }
 
 var (
-	// ErrInvalidAckRanges occurs when a client sends inconsistent ACK ranges
-	ErrInvalidAckRanges = errors.New("SACK contains invalid ACK ranges")
-	// ErrInvalidFirstAckRange occurs when the first ACK range contains no packets
-	ErrInvalidFirstAckRange = errors.New("SACK has invalid first ACK range")
-)
+	// errInvalidAckRanges occurs when a client sends inconsistent ACK ranges
+	errInvalidAckRanges = errors.New("SACK contains invalid ACK ranges")
+	// errInvalidFirstAckRange occurs when the first ACK range contains no packets
+	errInvalidFirstAckRange = errors.New("SACK has invalid first ACK range")
 
-var (
 	errInconsistentAckLargestAcked = errors.New("internal inconsistency: LargestAcked does not match ACK ranges")
 	errInconsistentAckLowestAcked  = errors.New("internal inconsistency: LowestAcked does not match ACK ranges")
 )
@@ -68,8 +65,7 @@ type sack struct {
 	largestAcked   uint64
 	largestInOrder uint64
 	// has to be ordered.
-	// The ACK range with the highest FirstPacketNumber goes first,
-	// the ACK range with the lowest FirstPacketNumber goes last
+	// The ACK range with the highest FirstPacketNumber goes first
 	ackRanges          []ackRange
 	delayTime          time.Duration
 	packetReceivedTime time.Time
@@ -265,7 +261,7 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 	}
 
 	if hasMissingRanges && numAckBlocks == 0 {
-		return nil, ErrInvalidAckRanges
+		return nil, errInvalidAckRanges
 	}
 
 	ackBlockLength, err := binary.ReadUvarint(r)
@@ -273,11 +269,11 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 		return nil, err
 	}
 	if ackBlockLength < 1 {
-		return nil, ErrInvalidFirstAckRange
+		return nil, errInvalidFirstAckRange
 	}
 
 	if ackBlockLength > largestAcked {
-		return nil, ErrInvalidAckRanges
+		return nil, errInvalidAckRanges
 	}
 
 	if hasMissingRanges {
@@ -332,7 +328,7 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 	}
 
 	if !s.validateAckRanges() {
-		return nil, ErrInvalidAckRanges
+		return nil, errInvalidAckRanges
 	}
 
 	return s, nil
@@ -359,7 +355,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 	if s.hasMissingRanges() {
 		numRanges = s.numWritableNackRanges()
 		if numRanges > 0xFF {
-			panic("AckFrame: Too many ACK ranges")
+			panic("SACK: Too many ACK ranges")
 		}
 		b.WriteByte(uint8(numRanges - 1))
 	}
@@ -372,7 +368,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 			return errInconsistentAckLargestAcked
 		}
 		if s.largestInOrder != s.ackRanges[len(s.ackRanges)-1].firstPacketNumber {
-			fmt.Printf("largest in order: %d, sack: %v", s.largestInOrder, s.ackRanges)
+			log.Println("error", s.ackRanges)
 			return errInconsistentAckLowestAcked
 		}
 		firstAckBlockLength = s.largestAcked - s.ackRanges[0].firstPacketNumber + 1
@@ -421,7 +417,7 @@ func (s *sack) Write(b *bytes.Buffer) error {
 			}
 		}
 
-		// this is needed if not all AckRanges can be written to the ACK frame (if there are more than 0xFF)
+		// this is needed if not all AckRanges can be written to the SACK (if there are more than 0xFF)
 		if numRangesWritten >= numRanges {
 			break
 		}

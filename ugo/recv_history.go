@@ -27,6 +27,11 @@ func (h *recvHistory) receivedPacket(p uint64) {
 
 	if h.ranges.Len() == 0 {
 		h.ranges.PushBack(utils.PacketInterval{Start: p, End: p})
+		// this must be the first time we receive packet,
+		// if it's not packet 1, insert a empty range,
+		if p != 1 {
+			h.ranges.PushFront(utils.PacketInterval{Start: 0, End: 0})
+		}
 		return
 	}
 
