@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jflyup/ugo/ugo/protocol"
@@ -35,13 +36,16 @@ type Conn struct {
 	receivedPackets  chan []byte
 	sendingScheduled chan struct{}
 
-	eof       bool
-	closed    bool
+	eof       int32
+	closed    int32
+	finSent   bool
+	finRcved  bool
 	closeChan chan struct{}
 
 	ackNoDelay    bool
 	originAckTime time.Time
 	linger        int
+	lingerTimer   *time.Timer
 
 	lastRcvdPacketNumber uint32
 
@@ -56,10 +60,9 @@ type Conn struct {
 	mutex           sync.Mutex
 	segmentQueue    *segmentSorter
 	chRead          chan struct{}
-	chWrite         chan struct{}
+	chWriteDone     chan struct{}
 
 	dataForWriting []byte
-	allSent        *sync.Cond
 
 	readTimeout  time.Time // read deadline
 	writeTimeout time.Time // write deadline
@@ -88,8 +91,7 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 		receivedPackets:  make(chan []byte, 1024),
 		sendingScheduled: make(chan struct{}, 1),
 		chRead:           make(chan struct{}, 1),
-		chWrite:          make(chan struct{}, 1),
-		allSent:          &sync.Cond{L: &sync.Mutex{}},
+		chWriteDone:      make(chan struct{}, 1),
 		linger:           -1, // Graceful shutdown is default behavior
 		ackNoDelay:       false,
 
@@ -130,41 +132,28 @@ func (c *Conn) run() {
 		}
 
 		if err != nil {
-			// abortive close for now
-			if err.Error() == "fin" || err.Error() == "rst" {
-				c.mutex.Lock()
-				c.eof = true
-				c.closed = true
-				close(c.closeChan)
-				c.mutex.Unlock()
-				return
-			}
-
-			log.Println("handle error", err)
-			c.closeImpl(err, false)
+			log.Println("handle error:", err)
+			c.resetConn(err, false)
 			return
 		}
 		// sendPacket may take a long time if continuous Write()
-		if err := c.sendPacket(); err != nil {
-			log.Println("send error", err)
-			c.closeImpl(err, false)
+		if err = c.sendPacket(); err != nil {
+			log.Println("send error:", err)
+			c.resetConn(err, false)
 			return
 		}
 
 		if time.Now().Sub(c.lastNetworkActivityTime) >= InitialIdleConnectionStateLifetime {
-			c.closeImpl(errors.New("No recent network activity."), false)
+			c.resetConn(errors.New("No recent network activity."), false)
 		}
 	}
 }
 
 // implementation of the net.Conn interface.
 func (c *Conn) Read(p []byte) (int, error) {
-	c.mutex.Lock()
-	if c.eof {
-		c.mutex.Unlock()
+	if atomic.LoadInt32(&c.eof) == 1 {
 		return 0, io.EOF
 	}
-	c.mutex.Unlock()
 
 	bytesRead := 0
 	for bytesRead < len(p) {
@@ -249,16 +238,15 @@ func (c *Conn) Read(p []byte) (int, error) {
 }
 
 func (c *Conn) Write(p []byte) (int, error) {
-	c.mutex.Lock()
-	if c.closed {
-		c.mutex.Unlock()
+	if atomic.LoadInt32(&c.closed) != 0 {
 		return 0, io.ErrClosedPipe
 	}
 
+	c.mutex.Lock()
 	c.dataForWriting = make([]byte, len(p))
 	copy(c.dataForWriting, p)
 	c.mutex.Unlock()
-	c.scheduleSending()
+	c.writeEvent()
 
 	var timeout <-chan time.Time
 	if !c.writeTimeout.IsZero() {
@@ -268,7 +256,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 
 	for {
 		select {
-		case <-c.chWrite:
+		case <-c.chWriteDone:
 			return len(p), nil
 		case <-timeout:
 			return 0, errTimeout
@@ -276,12 +264,24 @@ func (c *Conn) Write(p []byte) (int, error) {
 			return 0, io.ErrClosedPipe
 		}
 	}
-
 }
 
-// Close closes the connection, may block depending on LINGER option
+// Close closes the connection
 func (c *Conn) Close() error {
-	return c.closeImpl(nil, false)
+	if atomic.LoadInt32(&c.closed) == 1 {
+		return errors.New("close closed connection")
+	}
+	if c.linger == 0 {
+		c.resetConn(nil, false)
+		return nil
+	}
+	// no more Write()
+	atomic.StoreInt32(&c.closed, 1)
+	if c.linger > 0 {
+		c.lingerTimer = time.AfterFunc(time.Duration(c.linger)*time.Second,
+			func() { c.resetConn(errors.New("linger timeout"), false) })
+	}
+	return nil
 }
 
 // LocalAddr returns the local network address
@@ -361,7 +361,9 @@ func (c *Conn) resetTimer() {
 		return
 	}
 
-	// drain the timer if the value from its channel was not read yet.
+	// To reuse an active timer,
+	// always call its Stop method first
+	// and—if it had expired—drain the value from its channel.
 	if !c.timer.Stop() && !c.timerRead {
 		<-c.timer.C
 	}
@@ -406,7 +408,6 @@ func (c *Conn) handlePacket(data []byte) error {
 	}
 
 	if p.packetNumber != 0 {
-		// need ack
 		if c.originAckTime.IsZero() {
 			c.originAckTime = time.Now()
 		}
@@ -415,21 +416,28 @@ func (c *Conn) handlePacket(data []byte) error {
 	log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)
 
 	if p.flags == finFlag {
+		// generally, no data in fin packet
 		log.Println("recv fin")
-		// consider fin as error for quick close
-		return errors.New("fin")
+		atomic.StoreInt32(&c.eof, 1)
+		c.finRcved = true
+		if c.finSent {
+			// connection may be reseted already, avoid closing closed channel
+			c.exitLoop()
+			return nil
+		}
 	}
 
-	// no use for now
+	// no ack for fin at present
 	if p.flags == (ackFlag | finFlag) {
 		log.Println("recv ack fin")
 		// exit the loop
-		close(c.closeChan)
+		c.exitLoop()
 		return nil
 	}
 
 	if p.flags == rstFlag {
-		return errors.New("rst")
+		c.resetConn(errors.New("Connection reset by peer"), true)
+		return nil
 	}
 
 	if p.packetNumber != 0 {
@@ -469,7 +477,7 @@ func (c *Conn) handleSegment(s *segment) error {
 	}
 	c.mutex.Unlock()
 
-	// nonblocking
+	// non-blocking
 	select {
 	case c.chRead <- struct{}{}:
 	default:
@@ -479,60 +487,22 @@ func (c *Conn) handleSegment(s *segment) error {
 }
 
 func (c *Conn) handleSack(ack *sack, packetNum uint64) error {
-	c.allSent.L.Lock()
-	defer c.allSent.L.Unlock()
-
 	if err := c.packetSender.receivedAck(ack, packetNum); err != nil {
 		return err
-	}
-	if len(c.packetSender.packetHistory) == 0 {
-		c.allSent.Signal()
 	}
 
 	return nil
 }
 
-func (c *Conn) closeImpl(e error, remoteClose bool) error {
-	c.mutex.Lock()
-
-	if c.closed {
-		return errors.New("close closed connection")
-	}
-
-	if e != nil {
-		// reset connection immediately
-		c.sendRst()
-		c.eof = true
-		c.closed = true
-		close(c.closeChan)
-		return nil
-	}
-
-	if remoteClose {
-		// exit immediately for now. TODO
-		c.eof = true
-		c.closed = true
-		close(c.closeChan)
-		return nil
-	}
-	c.mutex.Unlock()
-
-	if e == nil && c.linger != 0 {
-		// TODO should also check whether dataForWriting is nil
-		// wait until all queued messages for the connection have been successfully sent(sent and acked) or
-		// the timeout has been reached. kind of SO_LINGER option in TCP.
-		c.allSent.L.Lock()
-		for len(c.packetSender.packetHistory) != 0 {
-			log.Println("closing")
-			c.allSent.Wait()
-		}
-		c.allSent.L.Unlock()
-	}
+func (c *Conn) resetConn(e error, remoteClose bool) error {
+	log.Printf("reset reason: %v", e)
 	if !remoteClose {
-		c.sendFin()
-	} else {
-		//c.sendAckFin()
+		c.sendRst()
 	}
+
+	atomic.StoreInt32(&c.eof, 1)
+	atomic.StoreInt32(&c.closed, 1)
+	c.exitLoop()
 
 	return nil
 }
@@ -542,9 +512,26 @@ func (c *Conn) sendPacket() error {
 	// or run out of the congestion window
 
 	// TODO send/handle packets in each goroutine?
-	// sending loop may lead to false RTO since ack arrives
+	// sending loop may lead to spurious RTO since ack arrives
 	// but sender didn't handle in time
 	for {
+		// don't know if short circuit is guaranteed by the spec
+		if atomic.LoadInt32(&c.closed) == 1 {
+			if c.lenOfDataForWriting() == 0 && len(c.packetSender.packetHistory) == 0 && !c.finSent {
+				c.sendFin()
+				// stop linger timer if any
+				if c.lingerTimer != nil {
+					if !c.lingerTimer.Stop() {
+						<-c.lingerTimer.C
+					}
+				}
+				if c.finRcved {
+					c.exitLoop()
+					return nil
+				}
+				// after fin was sent, no more packets except ACKs would be sent
+			}
+		}
 		err := c.packetSender.CheckForError()
 		if err != nil {
 			return err
@@ -701,6 +688,7 @@ func (c *Conn) sendFin() {
 	log.Printf("%s send fin to %s", c.localAddr.String(), c.RemoteAddr().String())
 	c.crypt.Encrypt(pkt.rawData, pkt.rawData)
 	c.conn.WriteTo(pkt.rawData, c.addr)
+	c.finSent = true
 }
 
 func (c *Conn) sendRst() {
@@ -727,10 +715,27 @@ func (c *Conn) sendAckFin() {
 	c.conn.WriteTo(pkt.rawData, c.addr)
 }
 
-// scheduleSending signals that we have data for sending
-func (c *Conn) scheduleSending() {
+func (c *Conn) exitLoop() {
+	select {
+	case <-c.closeChan:
+		// closed
+	default:
+		// not closed, close it
+		close(c.closeChan)
+	}
+}
+
+// writeEvent signals that we have data for sending
+func (c *Conn) writeEvent() {
 	select {
 	case c.sendingScheduled <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Conn) doneWriting() {
+	select {
+	case c.chWriteDone <- struct{}{}:
 	default:
 	}
 }
@@ -755,13 +760,11 @@ func (c *Conn) getDataForWriting(maxBytes uint64) []byte {
 	} else {
 		ret = c.dataForWriting
 		c.dataForWriting = nil
-		select {
-		case c.chWrite <- struct{}{}:
-		default:
-		}
+		c.doneWriting()
 	}
-	c.writeOffset += uint64(len(ret))
 	c.mutex.Unlock()
+
+	c.writeOffset += uint64(len(ret))
 
 	return ret
 }

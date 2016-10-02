@@ -167,7 +167,7 @@ func relay(in, out net.Conn) {
 	if _, err := io.Copy(in, out); err != nil {
 		log.Println("copy error", err)
 	}
-	in.Close() // will trigger an error in the other relay which will call out.Close()
+	in.Close() // will trigger an error in the other relay, then call out.Close()
 }
 
 // passive mode
