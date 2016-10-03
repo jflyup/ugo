@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,7 +96,7 @@ func parseSegment(r *bytes.Reader) (*segment, error) {
 	return frame, nil
 }
 
-func (s *segment) Write(b *bytes.Buffer) error {
+func (s *segment) write(b *bytes.Buffer) error {
 	numBuf := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(numBuf, s.offset)
 	b.Write(numBuf[:n])
@@ -108,7 +107,7 @@ func (s *segment) Write(b *bytes.Buffer) error {
 	return nil
 }
 
-func (s *segment) DataLen() uint64 {
+func (s *segment) dataLen() uint64 {
 	return uint64(len(s.data))
 }
 
@@ -196,7 +195,7 @@ func (p *ugoPacket) encode() error {
 	buf.WriteByte(p.flags)
 
 	if p.sack != nil {
-		if err := p.sack.Write(buf); err != nil {
+		if err := p.sack.write(buf); err != nil {
 			return err
 		}
 	}
@@ -214,7 +213,7 @@ func (p *ugoPacket) encode() error {
 	}
 
 	for _, f := range p.segments {
-		if err := f.Write(buf); err != nil {
+		if err := f.write(buf); err != nil {
 			return err
 		}
 	}
@@ -334,8 +333,7 @@ func parseSack(r *bytes.Reader) (*sack, error) {
 	return s, nil
 }
 
-// Write writes an ACK frame.
-func (s *sack) Write(b *bytes.Buffer) error {
+func (s *sack) write(b *bytes.Buffer) error {
 	var typeByte uint8
 
 	if s.hasMissingRanges() {
@@ -368,7 +366,6 @@ func (s *sack) Write(b *bytes.Buffer) error {
 			return errInconsistentAckLargestAcked
 		}
 		if s.largestInOrder != s.ackRanges[len(s.ackRanges)-1].firstPacketNumber {
-			log.Println("error", s.ackRanges)
 			return errInconsistentAckLowestAcked
 		}
 		firstAckBlockLength = s.largestAcked - s.ackRanges[0].firstPacketNumber + 1
@@ -424,7 +421,6 @@ func (s *sack) Write(b *bytes.Buffer) error {
 	}
 
 	if numRanges != numRangesWritten {
-		log.Println("illegal ack: ", s)
 		return errors.New("BUG: Inconsistent number of ACK ranges written")
 	}
 

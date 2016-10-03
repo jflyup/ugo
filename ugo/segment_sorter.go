@@ -37,10 +37,12 @@ func (s *segmentSorter) push(seg *segment) error {
 	}
 
 	start := seg.offset
-	end := seg.offset + seg.DataLen()
+	end := seg.offset + seg.dataLen()
 
 	if start == end {
-		return errEmptyStreamData
+		// fin
+		s.queuedFrames[seg.offset] = seg
+		return nil
 	}
 
 	var foundInGap bool
@@ -100,7 +102,7 @@ func (s *segmentSorter) push(seg *segment) error {
 func (s *segmentSorter) pop() *segment {
 	seg := s.head()
 	if seg != nil {
-		s.readPosition += seg.DataLen()
+		s.readPosition += seg.dataLen()
 		delete(s.queuedFrames, seg.offset)
 	}
 	return seg

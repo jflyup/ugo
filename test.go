@@ -22,11 +22,11 @@ func handleClient(c net.Conn) {
 			c.Write([]byte("hello, client"))
 
 		} else {
-			fmt.Println(err)
+			fmt.Println("read err:", err)
 			break
 		}
 	}
-	//c.Close()
+	c.Close()
 	fmt.Printf("recv %d bytes in total\n", sum)
 }
 

@@ -13,8 +13,9 @@ import (
 )
 
 func relay(in, out net.Conn) {
+	// io.Copy() does not treat an EOF from Read as an error to be reported.
 	if _, err := io.Copy(in, out); err != nil {
-		log.Println("copy error", err)
+		log.Println("copy error:", err)
 	}
 	in.Close() // will trigger an error in the other relay which would call out.Close()
 }

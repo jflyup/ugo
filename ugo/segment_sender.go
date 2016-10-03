@@ -34,13 +34,13 @@ func (f *segmentSender) popSegmentsForRetransmission(maxLen uint64) (res []*segm
 		splitSeg := maybeSplitOffFrame(seg, maxLen-currentLen)
 		if splitSeg != nil { // segment was split
 			res = append(res, splitSeg)
-			currentLen += splitSeg.DataLen()
+			currentLen += splitSeg.dataLen()
 			break
 		}
 
 		f.retransmissionQueue = f.retransmissionQueue[1:]
 		res = append(res, seg)
-		currentLen += seg.DataLen()
+		currentLen += seg.dataLen()
 	}
 	return
 }
@@ -49,7 +49,6 @@ func (f *segmentSender) popNormalSegments(maxBytes uint64) (res []*segment) {
 	frame := &segment{}
 	var currentLen uint64
 
-	// not perfect, but thread-safe since writeOffset is only written when getting data
 	frame.offset = f.c.writeOffset
 	var frameHeaderBytes uint64 = 4 // TODO
 	if currentLen+frameHeaderBytes > maxBytes {
@@ -76,7 +75,7 @@ func (f *segmentSender) popNormalSegments(maxBytes uint64) (res []*segment) {
 	//f.flowControlManager.AddBytesSent(s.streamID, uint32(len(data)))
 
 	res = append(res, frame)
-	currentLen += frameHeaderBytes + frame.DataLen()
+	currentLen += frameHeaderBytes + frame.dataLen()
 
 	return
 }
@@ -84,7 +83,7 @@ func (f *segmentSender) popNormalSegments(maxBytes uint64) (res []*segment) {
 // maybeSplitOffFrame removes the first n bytes and returns them as a separate frame.
 // If n >= len(frame), nil is returned and nothing is modified.
 func maybeSplitOffFrame(s *segment, n uint64) *segment {
-	if n >= s.DataLen() {
+	if n >= s.dataLen() {
 		return nil
 	}
 

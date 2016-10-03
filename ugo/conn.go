@@ -3,7 +3,6 @@ package ugo
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -33,13 +32,12 @@ type Conn struct {
 	packetReceiver *packetReceiver
 	segmentSender  *segmentSender
 
-	receivedPackets  chan []byte
-	sendingScheduled chan struct{}
+	receivedPackets chan []byte
+	chWriteEvent    chan struct{}
 
 	eof       int32
 	closed    int32
 	finSent   bool
-	finRcved  bool
 	closeChan chan struct{}
 
 	ackNoDelay    bool
@@ -88,12 +86,12 @@ func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.Conne
 
 		segmentQueue: newSegmentSorter(), // used for incoming segments reordering
 
-		receivedPackets:  make(chan []byte, 1024),
-		sendingScheduled: make(chan struct{}, 1),
-		chRead:           make(chan struct{}, 1),
-		chWriteDone:      make(chan struct{}, 1),
-		linger:           -1, // Graceful shutdown is default behavior
-		ackNoDelay:       false,
+		receivedPackets: make(chan []byte, 1024),
+		chWriteEvent:    make(chan struct{}, 1),
+		chRead:          make(chan struct{}, 1),
+		chWriteDone:     make(chan struct{}, 1),
+		linger:          -1, // Graceful shutdown is default behavior
+		ackNoDelay:      false,
 
 		closeChan: make(chan struct{}, 1), // use Close(closeChan) to broadcast
 		timer:     time.NewTimer(0),
@@ -126,7 +124,7 @@ func (c *Conn) run() {
 			return
 		case <-c.timer.C:
 			c.timerRead = true
-		case <-c.sendingScheduled:
+		case <-c.chWriteEvent:
 		case p := <-c.receivedPackets:
 			err = c.handlePacket(p)
 		}
@@ -178,11 +176,15 @@ func (c *Conn) Read(p []byte) (int, error) {
 				break
 			}
 			if frame != nil {
+				if frame.dataLen() == 0 {
+					log.Printf("%s recv fin from %s", c.localAddr.String(), c.RemoteAddr().String())
+					atomic.StoreInt32(&c.eof, 1)
+					return bytesRead, io.EOF
+				}
 				// Pop and continue if the frame doesn't have any new data
-				if frame.offset+frame.DataLen() <= c.readOffset {
+				if frame.offset+frame.dataLen() <= c.readOffset {
 					c.segmentQueue.pop()
 					frame = c.segmentQueue.head()
-
 					continue
 				}
 				// If the frame's offset is <= our current read pos, and we didn't
@@ -214,11 +216,13 @@ func (c *Conn) Read(p []byte) (int, error) {
 		}
 		c.mutex.Unlock()
 
+		// nearly impossible, check it anyway
 		if frame == nil {
+			atomic.StoreInt32(&c.eof, 1)
 			return bytesRead, io.EOF
 		}
 
-		m := utils.Min(len(p)-bytesRead, int(frame.DataLen())-c.readPosInFrame)
+		m := utils.Min(len(p)-bytesRead, int(frame.dataLen())-c.readPosInFrame)
 		copy(p[bytesRead:], frame.data[c.readPosInFrame:])
 
 		c.readPosInFrame += m
@@ -227,10 +231,14 @@ func (c *Conn) Read(p []byte) (int, error) {
 
 		//		s.flowControlManager.AddBytesRead(s.streamID, uint32(m))
 		//		s.onData() // so that a possible WINDOW_UPDATE is sent
-		if c.readPosInFrame >= int(frame.DataLen()) {
+		if c.readPosInFrame >= int(frame.dataLen()) {
 			c.mutex.Lock()
 			c.segmentQueue.pop()
 			c.mutex.Unlock()
+			if frame.dataLen() == 0 {
+				atomic.StoreInt32(&c.eof, 1)
+				return bytesRead, io.EOF
+			}
 		}
 	}
 
@@ -246,7 +254,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 	c.dataForWriting = make([]byte, len(p))
 	copy(c.dataForWriting, p)
 	c.mutex.Unlock()
-	c.writeEvent()
+	c.notifyWriteEvent()
 
 	var timeout <-chan time.Time
 	if !c.writeTimeout.IsZero() {
@@ -277,6 +285,9 @@ func (c *Conn) Close() error {
 	}
 	// no more Write()
 	atomic.StoreInt32(&c.closed, 1)
+
+	// close can be also treat as write event
+	c.notifyWriteEvent()
 	if c.linger > 0 {
 		c.lingerTimer = time.AfterFunc(time.Duration(c.linger)*time.Second,
 			func() { c.resetConn(errors.New("linger timeout"), false) })
@@ -384,7 +395,7 @@ func (c *Conn) handlePacket(data []byte) error {
 		if f.Flag() == typeData || f.Flag() == typeFEC {
 			if recovered := c.fec.input(f); recovered != nil {
 				for k := range recovered {
-					fmt.Println("recovered:", binary.LittleEndian.Uint32(recovered[k]))
+					log.Println("recovered:", binary.LittleEndian.Uint32(recovered[k]))
 				}
 			}
 		}
@@ -414,18 +425,6 @@ func (c *Conn) handlePacket(data []byte) error {
 	}
 
 	log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)
-
-	if p.flags == finFlag {
-		// generally, no data in fin packet
-		log.Println("recv fin")
-		atomic.StoreInt32(&c.eof, 1)
-		c.finRcved = true
-		if c.finSent {
-			// connection may be reseted already, avoid closing closed channel
-			c.exitLoop()
-			return nil
-		}
-	}
 
 	// no ack for fin at present
 	if p.flags == (ackFlag | finFlag) {
@@ -494,14 +493,15 @@ func (c *Conn) handleSack(ack *sack, packetNum uint64) error {
 	return nil
 }
 
-func (c *Conn) resetConn(e error, remoteClose bool) error {
-	log.Printf("reset reason: %v", e)
-	if !remoteClose {
+func (c *Conn) resetConn(e error, remoteClosed bool) error {
+	log.Printf("reason of reset: %v", e)
+	if !remoteClosed {
 		c.sendRst()
 	}
 
 	atomic.StoreInt32(&c.eof, 1)
 	atomic.StoreInt32(&c.closed, 1)
+	// TODO exit loop ASAP
 	c.exitLoop()
 
 	return nil
@@ -525,7 +525,7 @@ func (c *Conn) sendPacket() error {
 						<-c.lingerTimer.C
 					}
 				}
-				if c.finRcved {
+				if atomic.LoadInt32(&c.eof) == 1 {
 					c.exitLoop()
 					return nil
 				}
@@ -683,6 +683,10 @@ func (c *Conn) sendFin() {
 		flags:        finFlag,
 		packetNumber: 0,
 	}
+	seg := &segment{
+		offset: c.writeOffset,
+	}
+	pkt.segments = append(pkt.segments, seg)
 
 	pkt.encode()
 	log.Printf("%s send fin to %s", c.localAddr.String(), c.RemoteAddr().String())
@@ -726,9 +730,9 @@ func (c *Conn) exitLoop() {
 }
 
 // writeEvent signals that we have data for sending
-func (c *Conn) writeEvent() {
+func (c *Conn) notifyWriteEvent() {
 	select {
-	case c.sendingScheduled <- struct{}{}:
+	case c.chWriteEvent <- struct{}{}:
 	default:
 	}
 }
