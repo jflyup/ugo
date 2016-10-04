@@ -23,7 +23,7 @@ var (
 // reliable udp network connections. Use it like net.TcpConn
 type Conn struct {
 	conn         net.PacketConn
-	connectionID protocol.ConnectionID
+	connectionID uint32
 
 	addr      net.Addr
 	localAddr net.Addr
@@ -74,7 +74,7 @@ type Conn struct {
 	lastPacketNumber uint64
 }
 
-func newConnection(pc net.PacketConn, addr net.Addr, connectionID protocol.ConnectionID, crypt streamCrypto, fec *FEC, close func()) *Conn {
+func newConnection(pc net.PacketConn, addr net.Addr, connectionID uint32, crypt streamCrypto, fec *FEC, close func()) *Conn {
 	c := &Conn{
 		connectionID:  connectionID,
 		conn:          pc,
@@ -579,7 +579,7 @@ func (c *Conn) sendPacket() error {
 		stopWait := c.packetSender.GetStopWaitingFrame()
 
 		// get data
-		segments := c.segmentSender.PopSegments(protocol.MaxPacketSize - 40) // TODO
+		segments := c.segmentSender.PopSegments(maxPacketSize - 40) // TODO
 
 		if ack == nil && len(segments) == 0 && stopWait == 0 {
 			return nil

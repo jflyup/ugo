@@ -7,8 +7,6 @@ import (
 	"log"
 	"net"
 	"sync"
-
-	"github.com/jflyup/ugo/ugo/protocol"
 )
 
 var errListenerClosed = errors.New("Listener has been closed")
@@ -46,7 +44,7 @@ func Listen(network, addr string) (net.Listener, error) {
 
 func (l *listener) serve(conn net.PacketConn) {
 	for {
-		data := make([]byte, protocol.MaxPacketSize)
+		data := make([]byte, maxPacketSize)
 		n, remoteAddr, err := conn.ReadFrom(data)
 		if err != nil {
 			//if !strings.HasSuffix(err.Error(), "use of closed network connection") {
@@ -84,7 +82,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 			// TODO Connection migration
 			if buffer[0] == packetInit {
 				//iv := buffer[2:18]
-				clientConnectionID := protocol.ConnectionID(binary.BigEndian.Uint32(buffer[18:22]))
+				clientConnectionID := (binary.BigEndian.Uint32(buffer[18:22]))
 
 				var connectionID [4]byte
 				crand.Read(connectionID[:])

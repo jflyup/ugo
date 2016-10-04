@@ -6,8 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jflyup/ugo/ugo/protocol"
-
 	"github.com/klauspost/reedsolomon"
 )
 
@@ -67,7 +65,7 @@ func newFEC(rxlimit, dataShards, parityShards int) *FEC {
 	fec.shards = make([][]byte, fec.shardSize)
 	fec.shardsflag = make([]bool, fec.shardSize)
 	fec.xmitBuf.New = func() interface{} {
-		return make([]byte, protocol.MaxPacketSize)
+		return make([]byte, maxPacketSize)
 	}
 
 	return fec

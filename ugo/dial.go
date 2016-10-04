@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"log"
 
-	"github.com/jflyup/ugo/ugo/protocol"
-
 	//"bytes"
 	crand "crypto/rand"
 	"errors"
@@ -93,9 +91,10 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 	copy(initPacket.rawData[18:22], connectionID[:])
 
 	// negotiation
-	retries := 5
+	retries := uint32(0)
+	timeout := defaultRetransmissionTime
 	buffer := make([]byte, 65536)
-	var peerConnID protocol.ConnectionID
+	var peerConnID uint32
 	for {
 		_, err := pc.WriteTo(initPacket.rawData, addr)
 		if err != nil {
@@ -103,8 +102,11 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 			return nil, err
 		}
 
-		// wait for a response TODO establish connection in 0­-RTT like QUIC
-		pc.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		// Exponential backoff
+		timeout *= 1 << retries
+
+		// get connection ID
+		pc.SetReadDeadline(time.Now().Add(timeout))
 		n, _, err := pc.ReadFrom(buffer[:cap(buffer)])
 		pc.SetReadDeadline(time.Time{})
 		if ne, ok := err.(net.Error); ok && ne.Timeout() && ne.Temporary() {
@@ -116,14 +118,13 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 
 		// did we get reply?
 		if n == 4 {
-			peerConnID = protocol.ConnectionID(binary.BigEndian.Uint32(buffer[:n]))
-			log.Printf("connected with server, retry %d times", retries)
+			peerConnID = binary.BigEndian.Uint32(buffer[:n])
+			log.Printf("connected with server")
 			break
 		}
 
-		// TODO exponential backoff
-		retries--
-		if retries == 0 {
+		retries++
+		if retries >= maxInitRetriesAttempted {
 			pc.Close()
 			return nil, errConnectFailed
 		}
@@ -144,7 +145,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 // receive packets and feed them to the connection
 func recvData(c net.PacketConn, conn *Conn) {
 	for {
-		buf := make([]byte, protocol.MaxPacketSize)
+		buf := make([]byte, maxPacketSize)
 		n, _, err := c.ReadFrom(buf)
 		if err != nil {
 			conn.Close()

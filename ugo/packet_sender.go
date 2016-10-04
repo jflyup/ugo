@@ -16,6 +16,7 @@ var (
 	errTooManyTrackedSentPackets = errors.New("Too many outstanding non-acked and non-retransmitted packets")
 	errAckForUnsentPacket        = errors.New("Received ACK for an unsent packet")
 	errDuplicatePacketNumber     = errors.New("Packet number already exists in Packet History")
+	errConnectionFailures        = errors.New("peer not responding")
 )
 
 type packetSender struct {
@@ -31,7 +32,8 @@ type packetSender struct {
 
 	retransmissionQueue []*ugoPacket
 
-	bytesInFlight uint32
+	bytesInFlight       uint32
+	consecutiveRTOCount uint32
 
 	rttStats   *congestion.RTTStats
 	congestion congestion.SendAlgorithm
@@ -68,14 +70,9 @@ func (h *packetSender) ackPacket(packetNumber uint64) *ugoPacket {
 			// if the packet is marked as retransmitted and exists in packetHistory,
 			// it means this packet is queued for retransmission,
 			// but an ACK for it comes before resending
-			if h.bytesInFlight < packet.Length {
-				log.Println("BUG: bytes in flight < 0")
-				h.bytesInFlight = 0
-				h.totalAcked += packet.Length
-			} else {
-				h.bytesInFlight -= packet.Length
-				h.totalAcked += packet.Length
-			}
+
+			h.bytesInFlight -= packet.Length
+			h.totalAcked += packet.Length
 		}
 
 		if h.largestInOrderAcked == packetNumber-1 {
@@ -193,12 +190,15 @@ func (h *packetSender) receivedAck(ack *sack, withPacketNumber uint64) error {
 
 	h.largestAcked = ack.largestAcked
 
+	rttUpdated := false
+
 	packet, ok := h.packetHistory[h.largestAcked]
 	if ok {
 		// Update the RTT
+		rttUpdated = true
 		timeDelta := time.Now().Sub(packet.sendTime)
-		// TODO: Don't always update RTT
 		h.rttStats.UpdateRTT(timeDelta, ack.delayTime, time.Now())
+		h.consecutiveRTOCount = 0
 
 		log.Printf("Estimated RTT: %dms", h.rttStats.SmoothedRTT()/time.Millisecond)
 	}
@@ -250,7 +250,7 @@ func (h *packetSender) receivedAck(ack *sack, withPacketNumber uint64) error {
 	log.Printf("largest in order send %d, ack in order %d", h.largestInOrderAcked, ack.largestInOrder)
 
 	h.congestion.OnCongestionEvent(
-		true, /* TODO: rtt updated */
+		rttUpdated,
 		h.BytesInFlight(),
 		ackedPackets,
 		lostPackets,
@@ -305,6 +305,9 @@ func (h *packetSender) CheckForError() error {
 	if length > 2000 {
 		return errTooManyTrackedSentPackets
 	}
+	if h.consecutiveRTOCount > maxRetriesAttempted {
+		return errConnectionFailures
+	}
 	return nil
 }
 
@@ -330,6 +333,7 @@ func (h *packetSender) checkRTO() {
 			// reset RTO timer since this packet does not always get transmited immediately.
 			// After a RTO, congestion window may not allow to send
 			h.lastSentPacketTime = time.Now()
+			h.consecutiveRTOCount++
 			return
 		}
 	}
@@ -340,7 +344,10 @@ func (h *packetSender) getRTO() time.Duration {
 	if rto == 0 {
 		rto = defaultRetransmissionTime
 	}
-	return utils.MaxDuration(rto, minRetransmissionTime)
+	rto = utils.MaxDuration(rto, minRetransmissionTime)
+	// Exponential backoff
+	rto *= 1 << h.consecutiveRTOCount
+	return utils.MinDuration(rto, maxRetransmissionTime)
 }
 
 func (h *packetSender) timeOfFirstRTO() time.Time {
