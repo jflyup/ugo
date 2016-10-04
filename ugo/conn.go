@@ -286,7 +286,7 @@ func (c *Conn) Close() error {
 	// no more Write()
 	atomic.StoreInt32(&c.closed, 1)
 
-	// close can be also treat as write event
+	// Close can be also treat as a write event
 	c.notifyWriteEvent()
 	if c.linger > 0 {
 		c.lingerTimer = time.AfterFunc(time.Duration(c.linger)*time.Second,
@@ -515,9 +515,10 @@ func (c *Conn) sendPacket() error {
 	// sending loop may lead to spurious RTO since ack arrives
 	// but sender didn't handle in time
 	for {
-		// don't know if short circuit is guaranteed by the spec
+		// don't know if short circuit is guaranteed by the go spec
 		if atomic.LoadInt32(&c.closed) == 1 {
-			if c.lenOfDataForWriting() == 0 && len(c.packetSender.packetHistory) == 0 && !c.finSent {
+			// can't get mutex here, don't know why yet
+			if c.dataForWriting == nil && len(c.packetSender.packetHistory) == 0 && !c.finSent {
 				c.sendFin()
 				// stop linger timer if any
 				if c.lingerTimer != nil {
@@ -525,11 +526,11 @@ func (c *Conn) sendPacket() error {
 						<-c.lingerTimer.C
 					}
 				}
-				if atomic.LoadInt32(&c.eof) == 1 {
-					c.exitLoop()
-					return nil
-				}
 				// after fin was sent, no more packets except ACKs would be sent
+			}
+			if atomic.LoadInt32(&c.eof) == 1 {
+				c.exitLoop()
+				return nil
 			}
 		}
 		err := c.packetSender.CheckForError()
@@ -753,8 +754,8 @@ func (c *Conn) lenOfDataForWriting() uint32 {
 
 func (c *Conn) getDataForWriting(maxBytes uint64) []byte {
 	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	if c.dataForWriting == nil {
-		c.mutex.Unlock()
 		return nil
 	}
 	var ret []byte
@@ -766,7 +767,6 @@ func (c *Conn) getDataForWriting(maxBytes uint64) []byte {
 		c.dataForWriting = nil
 		c.doneWriting()
 	}
-	c.mutex.Unlock()
 
 	c.writeOffset += uint64(len(ret))
 

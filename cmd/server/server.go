@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 
 	"github.com/jflyup/ugo/ugo"
@@ -69,6 +71,9 @@ func main() {
 	// 		return
 	// 	}
 	// }()
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 
 	//log.SetOutput(ioutil.Discard)
 	if l, err := ugo.Listen("udp", os.Args[1]+":9000"); err == nil {
