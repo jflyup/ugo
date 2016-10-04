@@ -104,10 +104,9 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 
 		// Exponential backoff
 		timeout *= 1 << retries
-
-		// get connection ID
 		pc.SetReadDeadline(time.Now().Add(timeout))
 		n, _, err := pc.ReadFrom(buffer[:cap(buffer)])
+		// reset deadline to 0 for ReadFrom() after handshake
 		pc.SetReadDeadline(time.Time{})
 		if ne, ok := err.(net.Error); ok && ne.Timeout() && ne.Temporary() {
 			n = 0
@@ -156,7 +155,7 @@ func recvData(c net.PacketConn, conn *Conn) {
 		select {
 		case conn.receivedPackets <- buf[:n]:
 		default:
-			log.Printf("discard")
+			log.Printf("full queue, discard")
 		}
 
 	}

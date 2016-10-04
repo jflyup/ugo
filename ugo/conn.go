@@ -53,7 +53,7 @@ type Conn struct {
 	timer           *time.Timer
 	currentDeadline time.Time
 	timerRead       bool
-	fec             *FEC
+	fec             *FEC // forward error correction, good for lossy links but not for congested ones
 	crypt           streamCrypto
 	err             error
 	mutex           sync.Mutex
@@ -112,7 +112,6 @@ func (c *Conn) run() {
 		// Close immediately if requested
 		select {
 		case <-c.closeChan:
-			log.Printf("close connection with %s", c.addr.String())
 			return
 		default:
 		}
