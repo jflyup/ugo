@@ -38,6 +38,7 @@ type Conn struct {
 	eof       int32
 	closed    int32
 	finSent   bool
+	finRcvd   bool
 	closeChan chan struct{}
 
 	ackNoDelay    bool
@@ -177,7 +178,8 @@ func (c *Conn) Read(p []byte) (int, error) {
 			}
 			if frame != nil {
 				if frame.dataLen() == 0 {
-					log.Printf("%s recv fin from %s", c.localAddr.String(), c.RemoteAddr().String())
+					log.Printf("EOF:%s<--%s", c.localAddr.String(), c.RemoteAddr().String())
+					c.mutex.Unlock()
 					atomic.StoreInt32(&c.eof, 1)
 					return bytesRead, io.EOF
 				}
@@ -424,8 +426,12 @@ func (c *Conn) handlePacket(data []byte) error {
 		}
 	}
 
-	log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)
+	//log.Printf("%s recv packet %d from %s, length %d", c.localAddr.String(), p.packetNumber, c.RemoteAddr().String(), p.Length)
 
+	if p.flags&finFlag == finFlag {
+		log.Printf("%s recv fin", c.LocalAddr().String())
+		c.finRcvd = true
+	}
 	// no ack for fin at present
 	if p.flags == (ackFlag | finFlag) {
 		log.Println("recv ack fin")
@@ -517,8 +523,7 @@ func (c *Conn) sendPacket() error {
 	for {
 		// don't know if short circuit is guaranteed by the go spec
 		if atomic.LoadInt32(&c.closed) == 1 {
-			// can't get mutex here, don't know why yet
-			if c.dataForWriting == nil && len(c.packetSender.packetHistory) == 0 && !c.finSent {
+			if c.lenOfDataForWriting() == 0 && len(c.packetSender.packetHistory) == 0 && !c.finSent {
 				c.sendFin()
 				// stop linger timer if any
 				if c.lingerTimer != nil {
@@ -528,7 +533,9 @@ func (c *Conn) sendPacket() error {
 				}
 				// after fin was sent, no more packets except ACKs would be sent
 			}
-			if atomic.LoadInt32(&c.eof) == 1 {
+			// application may not read the EOF, so if we received fin
+			// and application asks to close the connection, exit the loop
+			if c.finSent && c.finRcvd {
 				c.exitLoop()
 				return nil
 			}
@@ -537,7 +544,7 @@ func (c *Conn) sendPacket() error {
 		if err != nil {
 			return err
 		}
-		// do this before congestion check
+		// do this before congestion check since it may alter CWND
 		c.packetSender.checkRTO()
 
 		if !c.packetSender.CongestionAllowsSending() {
@@ -615,7 +622,7 @@ func (c *Conn) sendPacket() error {
 			pkt.packetNumber = 0
 		}
 
-		log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))
+		//log.Printf("%s sending packet %d to %s\n, data length: %d", c.localAddr.String(), pkt.packetNumber, c.addr, len(pkt.rawData))
 		if pkt.packetNumber != 0 {
 			err = c.packetSender.sentPacket(pkt)
 			if err != nil {
