@@ -3,8 +3,6 @@ package ugo
 import (
 	"errors"
 
-	"github.com/jflyup/ugo/ugo/protocol"
-
 	"github.com/jflyup/ugo/ugo/utils"
 )
 
@@ -26,7 +24,7 @@ func newSegmentSorter() *segmentSorter {
 		gaps:         utils.NewByteIntervalList(),
 		queuedFrames: make(map[uint64]*segment),
 	}
-	s.gaps.PushFront(utils.ByteInterval{Start: 0, End: protocol.MaxByteCount})
+	s.gaps.PushFront(utils.ByteInterval{Start: 0, End: maxByteCount})
 	return &s
 }
 
@@ -91,7 +89,7 @@ func (s *segmentSorter) push(seg *segment) error {
 		return errDuplicateStreamData
 	}
 
-	if s.gaps.Len() > protocol.MaxStreamFrameSorterGaps {
+	if s.gaps.Len() > MaxStreamFrameSorterGaps {
 		return errTooManyGapsInReceivedStreamData
 	}
 

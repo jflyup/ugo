@@ -1,6 +1,7 @@
 package ugo
 
 import (
+	"math"
 	"time"
 )
 
@@ -41,12 +42,38 @@ const maxRetriesAttempted = 10
 // kind of net.ipv4.tcp_syn_retries
 const maxInitRetriesAttempted = 5
 
+// InitialIdleConnectionStateLifetime is the initial idle connection state lifetime
+// when we use ugo in http proxy, since http with keepalive option will
+// keep connection open for a while, this value should be greater than that
+const initialIdleConnectionStateLifetime = 300 * time.Second
+
 // DefaultMaxCongestionWindow is the default for the max congestion window
 // Taken from Chrome
-const DefaultMaxCongestionWindow uint64 = 107
+const defaultMaxCongestionWindow uint64 = 200
 
 // InitialCongestionWindow is the initial congestion window in QUIC packets
-const InitialCongestionWindow uint64 = 32
+const initialCongestionWindow uint64 = 32
 
-// InitialIdleConnectionStateLifetime is the initial idle connection state lifetime
-const InitialIdleConnectionStateLifetime = 60 * time.Second
+// maxByteCount is the maximum value of a uint32
+const maxByteCount = math.MaxUint64
+
+// InitialConnectionFlowControlWindow is the initial connection-level flow control window for sending
+const InitialConnectionFlowControlWindow uint32 = (1 << 14) // 16 kB
+
+// ackSendDelay is the maximal time delay applied to packets containing only ACKs
+const ackSendDelay = 5 * time.Millisecond
+
+// ReceiveConnectionFlowControlWindow is the stream-level flow control window for receiving data
+// This is the value that Google servers are using
+const ReceiveConnectionFlowControlWindow uint32 = (1 << 20) * 1.5 // 1.5 MB
+
+// retransmissionThreshold + 1 is the number of times a packet has to be NACKed so that it gets retransmitted
+const retransmissionThreshold uint8 = 3
+
+// maxTrackedSentPackets is maximum number of sent packets saved for either later retransmission or entropy calculation
+// TODO: find a reasonable value here
+const maxTrackedSentPackets int = 2000
+
+// MaxStreamFrameSorterGaps is the maximum number of gaps between received StreamFrames
+// prevents DOS attacks against the streamFrameSorter
+const MaxStreamFrameSorterGaps = 50

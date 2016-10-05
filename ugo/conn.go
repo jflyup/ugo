@@ -10,9 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jflyup/ugo/ugo/protocol"
-
 	"github.com/jflyup/ugo/ugo/utils"
+	"github.com/lucas-clemente/quic-go/protocol"
 )
 
 var (
@@ -141,7 +140,7 @@ func (c *Conn) run() {
 			return
 		}
 
-		if time.Now().Sub(c.lastNetworkActivityTime) >= InitialIdleConnectionStateLifetime {
+		if time.Now().Sub(c.lastNetworkActivityTime) >= initialIdleConnectionStateLifetime {
 			c.resetConn(errors.New("No recent network activity."), false)
 		}
 	}
@@ -357,7 +356,7 @@ func (c *Conn) SetLinger(sec int) error {
 
 // TODO timer queue
 func (c *Conn) resetTimer() {
-	nextDeadline := c.lastNetworkActivityTime.Add(InitialIdleConnectionStateLifetime)
+	nextDeadline := c.lastNetworkActivityTime.Add(initialIdleConnectionStateLifetime)
 
 	if !c.originAckTime.IsZero() {
 		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(protocol.AckSendDelay))

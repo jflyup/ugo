@@ -6,8 +6,12 @@ import (
 	"github.com/jflyup/ugo/ugo/utils"
 )
 
+// defaultTCPMSS is the default maximum packet size used in the Linux TCP implementation.
+// Used in congestion window computations in bytes.
+const defaultTCPMSS uint32 = 1460
+
 const (
-	maxBurstBytes                          = 3 * 1460
+	maxBurstBytes                          = 3 * defaultTCPMSS
 	defaultMinimumCongestionWindow uint64  = 2
 	renoBeta                       float32 = 0.7 // Reno backoff factor.
 )
@@ -109,11 +113,11 @@ func (c *cubicSender) InSlowStart() bool {
 }
 
 func (c *cubicSender) GetCongestionWindow() uint32 {
-	return uint32(c.congestionWindow) * 1460
+	return uint32(c.congestionWindow) * defaultTCPMSS
 }
 
 func (c *cubicSender) GetSlowStartThreshold() uint32 {
-	return uint32(c.slowstartThreshold) * 1460
+	return uint32(c.slowstartThreshold) * defaultTCPMSS
 }
 
 func (c *cubicSender) ExitSlowstart() {
@@ -162,7 +166,7 @@ func (c *cubicSender) onPacketLost(packetNumber uint64, lostBytes uint32, bytesI
 			c.stats.slowstartPacketsLost++
 			c.stats.slowstartBytesLost += lostBytes
 			if c.slowStartLargeReduction {
-				if c.stats.slowstartPacketsLost == 1 || (c.stats.slowstartBytesLost/1460) > (c.stats.slowstartBytesLost-lostBytes)/1460 {
+				if c.stats.slowstartPacketsLost == 1 || (c.stats.slowstartBytesLost/defaultTCPMSS) > (c.stats.slowstartBytesLost-lostBytes)/defaultTCPMSS {
 					// Reduce congestion window by 1 for every mss of bytes lost.
 					c.congestionWindow = utils.MaxPacketNumber(c.congestionWindow-1, c.minCongestionWindow)
 				}

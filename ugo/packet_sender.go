@@ -51,8 +51,8 @@ func newPacketSender() *packetSender {
 		congestion.DefaultClock{},
 		rttStats,
 		false, /* don't use reno since chromium doesn't (why?) */
-		InitialCongestionWindow,
-		DefaultMaxCongestionWindow,
+		initialCongestionWindow,
+		defaultMaxCongestionWindow,
 	)
 
 	return &packetSender{
@@ -100,8 +100,8 @@ func (h *packetSender) nackPacket(packetNumber uint64) (*ugoPacket, error) {
 
 	packet.missingCount++
 
-	if packet.missingCount > 3 && !packet.retransmitted {
-		log.Printf("fast retransimition packet %d, Missing count %d", packet.packetNumber, packet.missingCount)
+	if packet.missingCount > retransmissionThreshold && !packet.retransmitted {
+		log.Printf("fast retransimition packet %d", packet.packetNumber)
 		h.queuePacketForRetransmission(packet) // fast retransmition
 		return packet, nil
 	}
@@ -302,7 +302,7 @@ func (h *packetSender) CongestionAllowsSending() bool {
 
 func (h *packetSender) CheckForError() error {
 	length := len(h.retransmissionQueue) + len(h.packetHistory)
-	if length > 2000 {
+	if length > maxTrackedSentPackets {
 		return errTooManyTrackedSentPackets
 	}
 	if h.consecutiveRTOCount > maxRetriesAttempted {
