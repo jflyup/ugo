@@ -77,23 +77,25 @@ type segment struct {
 }
 
 func parseSegment(r *bytes.Reader) (*segment, error) {
-	frame := &segment{}
+	s := &segment{}
 
 	var err error
-	if frame.offset, err = binary.ReadUvarint(r); err != nil {
+	if s.offset, err = binary.ReadUvarint(r); err != nil {
 		return nil, err
 	}
-	l, err := utils.ReadUint16(r)
+	var l uint16
+	err = binary.Read(r, binary.BigEndian, l)
 	if err != nil {
 		return nil, err
 	}
-
-	frame.data = make([]byte, l)
-	if _, err := r.Read(frame.data); err != nil {
-		return nil, err
+	if l != 0 {
+		s.data = make([]byte, l)
+		if _, err := r.Read(s.data); err != nil {
+			return nil, err
+		}
 	}
 
-	return frame, nil
+	return s, nil
 }
 
 func (s *segment) write(b *bytes.Buffer) error {
@@ -101,7 +103,7 @@ func (s *segment) write(b *bytes.Buffer) error {
 	n := binary.PutUvarint(numBuf, s.offset)
 	b.Write(numBuf[:n])
 
-	utils.WriteUint16(b, uint16(len(s.data)))
+	binary.Write(b, binary.BigEndian, uint16(len(s.data)))
 	b.Write(s.data)
 
 	return nil
@@ -114,7 +116,7 @@ func (s *segment) dataLen() uint64 {
 /*
 0        1            varint                                varint                 uint16
 +--------+--------------------------------+--------+------------------------+----------------+-----
-|  flags  |       packet number(opt)       |  SACK  |      offset            |  data length   | data
+|  flags  |       packet number(opt)       |  SACK  |      offset           |  data length   | data
 +--------+--------------------------------+--------+------------------------+----------------+-----
 */
 
@@ -139,7 +141,7 @@ func (p *ugoPacket) decode() (err error) {
 		return
 	}
 
-	if p.flags&ackFlag == ackFlag { // ack flag
+	if p.flags&ackFlag == ackFlag {
 		p.sack, err = parseSack(r)
 		if err != nil {
 			return
