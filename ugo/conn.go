@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jflyup/ugo/ugo/utils"
-	"github.com/lucas-clemente/quic-go/protocol"
 )
 
 var (
@@ -360,7 +359,7 @@ func (c *Conn) resetTimer() {
 	nextDeadline := c.lastNetworkActivityTime.Add(initialIdleConnectionStateLifetime)
 
 	if !c.originAckTime.IsZero() {
-		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(protocol.AckSendDelay))
+		nextDeadline = utils.MinTime(nextDeadline, c.originAckTime.Add(ackSendDelay))
 	}
 	if rtoTime := c.packetSender.timeOfFirstRTO(); !rtoTime.IsZero() {
 		if rtoTime.After(time.Now()) {
@@ -585,7 +584,7 @@ func (c *Conn) sendPacket() error {
 		}
 
 		// Check whether we are allowed to send a packet containing only an ACK
-		onlyAck := time.Now().Sub(c.originAckTime) > protocol.AckSendDelay || c.ackNoDelay
+		onlyAck := time.Now().Sub(c.originAckTime) > ackSendDelay || c.ackNoDelay
 
 		if len(segments) == 0 && stopWait == 0 {
 			if !onlyAck {
