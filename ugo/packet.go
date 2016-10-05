@@ -84,7 +84,7 @@ func parseSegment(r *bytes.Reader) (*segment, error) {
 		return nil, err
 	}
 	var l uint16
-	err = binary.Read(r, binary.BigEndian, l)
+	err = binary.Read(r, binary.BigEndian, &l)
 	if err != nil {
 		return nil, err
 	}
