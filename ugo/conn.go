@@ -251,6 +251,7 @@ func (c *Conn) Write(p []byte) (int, error) {
 	}
 
 	c.mutex.Lock()
+	// TODO don't make every time
 	c.dataForWriting = make([]byte, len(p))
 	copy(c.dataForWriting, p)
 	c.mutex.Unlock()

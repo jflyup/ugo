@@ -76,7 +76,6 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 		pc.Close()
 		return nil, fmt.Errorf("Failed to generate iv: %v", err)
 	}
-	log.Printf("addr: %s, iv: %v", pc.LocalAddr().String(), iv)
 	var connectionID [4]byte
 	crand.Read(connectionID[:])
 
@@ -134,7 +133,11 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 
 	//fec = NewFEC(128, 10, 3)
 	// create connection
-	conn := newConnection(pc, addr, peerConnID, RC4Crypto, nil, func() { pc.Close() })
+	conn := newConnection(pc, addr, peerConnID, RC4Crypto, nil,
+		func() {
+			log.Printf("%s close conn with %s", pc.LocalAddr().String(), addr.String())
+			pc.Close()
+		})
 
 	go conn.run()
 	go recvData(pc, conn)
