@@ -65,8 +65,7 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if conn, ok := l.connections[remoteAddr.String()]; ok {
-		// TODO check data integrity
-
+		// TODO check data validity, refer to STN cookies
 		if len(buffer) == 22 && buffer[0] == packetInit && buffer[1] == aesEncrypt {
 			log.Println("already connected, discard:", buffer)
 		} else {
@@ -79,9 +78,8 @@ func (l *listener) handlePacket(c net.PacketConn, remoteAddr net.Addr, buffer []
 		}
 	} else {
 		if len(buffer) == 22 {
-			// TODO Connection migration
+			// TODO connection migration
 			if buffer[0] == packetInit {
-				//iv := buffer[2:18]
 				clientConnectionID := (binary.BigEndian.Uint32(buffer[18:22]))
 
 				var connectionID [4]byte

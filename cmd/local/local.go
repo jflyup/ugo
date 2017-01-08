@@ -142,7 +142,8 @@ func doConnect(c net.Conn, command uint8) (proxyConn net.Conn, err error) {
 	sendReply(c, succeeded)
 	// send original request host
 
-	// since ugo.Conn didn't accumulate data, send as much as possible one time
+	// ugo.Conn doesn't accumulate data like Nagle's algorithm,
+	// send enough data to fill the MSS
 	buf := new(bytes.Buffer)
 	binary.Write(buf, binary.BigEndian, uint16(len(addr)))
 	buf.Write([]byte(addr))

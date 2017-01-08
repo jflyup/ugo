@@ -79,6 +79,7 @@ func handshake(pc net.PacketConn, addr net.Addr) (*Conn, error) {
 	var connectionID [4]byte
 	crand.Read(connectionID[:])
 
+	// TODO re-design connection establishment
 	// generate INIT packet
 	initPacket := &ugoPacket{
 		rawData: make([]byte, 22),
